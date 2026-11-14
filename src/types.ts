@@ -58,7 +58,6 @@ export interface Stats {
 export const KINDS: { id: Kind; label: string }[] = [
   { id: 'ingreso', label: 'Ingresos' },
   { id: 'gasto', label: 'Gastos' },
-  { id: 'servicio', label: 'Servicios' },
 ]
 
 export const MONTHS = [

@@ -158,6 +158,18 @@ export function useBoard() {
         categories: current.categories.map((category) => (category.id === id ? { ...category, ...next } : category)),
       }))
     },
+    moveCategory(id: string, direction: -1 | 1) {
+      patch((current) => {
+        const categories = sorted(current.categories)
+        const index = categories.findIndex((category) => category.id === id)
+        const target = index + direction
+        if (index < 0 || target < 0 || target >= categories.length) return current
+        const next = categories.slice()
+        const [item] = next.splice(index, 1)
+        next.splice(target, 0, item)
+        return { ...current, categories: next.map((category, order) => ({ ...category, sortOrder: order })) }
+      })
+    },
     removeCategory(id: string) {
       patch((current) => ({
         ...current,

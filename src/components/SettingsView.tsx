@@ -1,10 +1,14 @@
 import { useState, type FormEvent } from 'react'
 import { isDB } from '../types'
+import { go } from '../route'
 import { useStore } from '../store'
+import { TASK_COLORS, useBoard } from '../tasks'
 import type { SupabaseConfig } from '../remote'
 
-export function SettingsView() {
+export function SettingsView({ scope }: { scope: 'general' | 'cuentas' | 'pendientes' }) {
   const store = useStore()
+  const board = useBoard()
+  const [taskName, setTaskName] = useState('')
   const [url, setUrl] = useState('')
   const [key, setKey] = useState('')
   const [message, setMessage] = useState<string | null>(null)
@@ -63,11 +67,29 @@ export function SettingsView() {
     <div className="wrap settings">
       <header className="page-head">
         <div>
-          <p className="kicker">Administrar</p>
-          <h1 className="page-title">Ajustes</h1>
+          <p className="kicker">Configuración</p>
+          <h1 className="page-title">{scope === 'cuentas' ? 'Cuentas' : scope === 'pendientes' ? 'Pendientes' : 'General'}</h1>
         </div>
       </header>
 
+      {scope === 'cuentas' && (
+        <>
+        <p className="formula">Un ítem es un ingreso o un gasto. Siempre lleva una categoría. En el mes se elige si es variable, fijo o periódico.</p>
+        <nav className="config-links" aria-label="Cuentas">
+          <button type="button" onClick={() => go('categorias')}>
+            <span>Categorías</span>
+            <small>Los grupos. Cada gasto y cada ingreso pertenece a una.</small>
+          </button>
+          <button type="button" onClick={() => go('recurrentes')}>
+            <span>Fijos</span>
+            <small>Ítems que se copian en todos los meses, con su valor.</small>
+          </button>
+        </nav>
+        </>
+      )}
+
+      {scope === 'general' && (
+      <>
       <section className="panel">
         <div className="panel-top">
           <h2>Base de datos</h2>
@@ -147,8 +169,55 @@ export function SettingsView() {
           </label>
         </div>
       </section>
+      </>
+      )}
 
-      {message && <p className="hint alone">{message}</p>}
+      {message && scope === 'general' && <p className="hint alone">{message}</p>}
+
+      {scope === 'pendientes' && (
+      <section className="config-module" aria-label="Pendientes">
+        <h2>Pendientes</h2>
+        <p className="hint">Categorías en el orden del tablero.</p>
+        <ol className="order-list">
+          {board.categories.map((category, index) => (
+            <li key={category.id}>
+              <i className="dot" style={{ background: category.color }} />
+              <input
+                aria-label={`Nombre de ${category.name}`}
+                value={category.name}
+                onChange={(event) => board.updateCategory(category.id, { name: event.target.value })}
+              />
+              <button type="button" aria-label={`Subir ${category.name}`} disabled={index === 0} onClick={() => board.moveCategory(category.id, -1)}>
+                ↑
+              </button>
+              <button
+                type="button"
+                aria-label={`Bajar ${category.name}`}
+                disabled={index === board.categories.length - 1}
+                onClick={() => board.moveCategory(category.id, 1)}
+              >
+                ↓
+              </button>
+            </li>
+          ))}
+        </ol>
+        <form
+          className="order-add"
+          onSubmit={(event) => {
+            event.preventDefault()
+            const name = taskName.trim()
+            if (!name) return
+            board.addCategory(name, TASK_COLORS[board.categories.length % TASK_COLORS.length])
+            setTaskName('')
+          }}
+        >
+          <input value={taskName} placeholder="Nueva categoría" aria-label="Nueva categoría de pendientes" onChange={(event) => setTaskName(event.target.value)} />
+          <button className="btn" type="submit">
+            Agregar
+          </button>
+        </form>
+      </section>
+      )}
     </div>
   )
 }

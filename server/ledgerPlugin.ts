@@ -103,10 +103,11 @@ async function handle(databaseUrl: string | undefined, path: string, req: Incomi
     if (path === '/api/ledger' && req.method === 'GET') {
       const rows = await sql`select data, updated_at from ledger where id = 'main'`
       const data = rows[0]?.data ?? null
+      const updatedAt = rows[0]?.updated_at ?? null
       if (isLedger(data)) await writeLog(sql, 'info', 'cargar', 'Libro leído', counts(data))
       else await writeLog(sql, 'info', 'cargar', 'Libro vacío', null)
       res.setHeader('content-type', 'application/json')
-      res.end(JSON.stringify(data))
+      res.end(JSON.stringify({ data, updatedAt }))
       return
     }
     if (path === '/api/ledger' && (req.method === 'PUT' || req.method === 'POST')) {
@@ -119,12 +120,13 @@ async function handle(databaseUrl: string | undefined, path: string, req: Incomi
         return
       }
       const detail = counts(parsed)
-      await sql`insert into ledger (id, data, updated_at)
+      const saved = await sql`insert into ledger (id, data, updated_at)
         values ('main', ${JSON.stringify(parsed)}::jsonb, now())
-        on conflict (id) do update set data = excluded.data, updated_at = now()`
+        on conflict (id) do update set data = excluded.data, updated_at = now()
+        returning updated_at`
       await writeLog(sql, 'info', 'guardar', 'Libro guardado', detail)
       res.setHeader('content-type', 'application/json')
-      res.end('{"ok":true}')
+      res.end(JSON.stringify({ ok: true, updatedAt: saved[0]?.updated_at ?? null }))
       return
     }
     res.statusCode = 405

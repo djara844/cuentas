@@ -1,5 +1,9 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { App } from '@capacitor/app'
+import { Capacitor } from '@capacitor/core'
 import type { SupabaseClient, Session } from '@supabase/supabase-js'
+import { readCloud, writeCloud } from './cloudLedger'
+import { hasDeletes, loadMeta, markLocalChange, mergeBooks, noteDeleted, saveMeta, type SyncMeta } from './syncBook'
 import type { Category, DB, Entry, Kind, Period, Template } from './types'
 import { instantiateTemplates, isDB, periodLabel, sortOrderFor, uid } from './types'
 import { buildSeed, paintedColor } from './seed'
@@ -53,42 +57,6 @@ function loadLocal(): DB | null {
 
 function saveLocal(db: DB) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(db))
-}
-
-async function pullCloud(): Promise<'down' | 'empty' | DB> {
-  try {
-    const res = await fetch('/api/ledger', { headers: { accept: 'application/json' } })
-    if (!res.ok) return 'down'
-    const body = (await res.json()) as unknown
-    if (body == null) return 'empty'
-    return isDB(body) ? normalize(body) : 'empty'
-  } catch {
-    return 'down'
-  }
-}
-
-async function pushCloud(next: DB) {
-  let res: Response
-  try {
-    res = await fetch('/api/ledger', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(next),
-      keepalive: true,
-    })
-  } catch {
-    throw new Error('No se pudo guardar en Neon.')
-  }
-  if (!res.ok) {
-    const message = res.status === 400 ? 'El libro no se guardó: llegó incompleto.' : 'No se pudo guardar en Neon.'
-    void fetch('/api/logs', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ level: 'error', action: 'guardar', message }),
-      keepalive: true,
-    }).catch(() => undefined)
-    throw new Error(message)
-  }
 }
 
 interface Store {
@@ -167,18 +135,74 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  function showBook(next: DB, meta: SyncMeta) {
+    const normalized = normalize(next)
+    dbRef.current = normalized
+    setDb(normalized)
+    saveLocal(normalized)
+    saveMeta(meta)
+    if (!readConfig()) setMode(meta.dirty || meta.provisional ? 'local' : 'neon')
+  }
+
   function commit(recipe: (current: DB) => DB) {
     const next = recipe(dbRef.current)
     dbRef.current = next
     setDb(next)
     saveLocal(next)
-    if (cloud.current) {
-      window.clearTimeout(timers.current.cloud)
-      timers.current.cloud = window.setTimeout(() => {
-        void pushCloud(dbRef.current).catch(report)
-      }, 300)
+    if (!readConfig()) {
+      markLocalChange()
+      setMode('local')
+      scheduleSync()
     }
     return next
+  }
+
+  function scheduleSync() {
+    if (readConfig() || !navigator.onLine) return
+    window.clearTimeout(timers.current.cloud)
+    timers.current.cloud = window.setTimeout(() => {
+      void reconcile()
+    }, 400)
+  }
+
+  async function reconcile() {
+    if (readConfig() || !navigator.onLine) return
+    if (cloud.current) return
+    cloud.current = true
+    try {
+      const remote = await readCloud()
+      if (remote.status === 'down') {
+        setMode('local')
+        return
+      }
+      const meta = loadMeta()
+      const local = dbRef.current
+      if (meta.provisional && remote.status === 'ok') {
+        showBook(remote.db, { revision: remote.updatedAt, dirty: false, provisional: false, deleted: { categories: [], periods: [], entries: [], templates: [] } })
+        return
+      }
+      const pending = meta.dirty || hasDeletes(meta)
+      if (!pending) {
+        if (remote.status === 'empty') {
+          const updatedAt = await writeCloud(local)
+          if (updatedAt == null) return
+          showBook(local, { ...meta, revision: updatedAt, dirty: false, provisional: false })
+          return
+        }
+        if (remote.updatedAt !== meta.revision) showBook(remote.db, { ...meta, revision: remote.updatedAt, dirty: false, provisional: false })
+        else setMode('neon')
+        return
+      }
+      const merged = remote.status === 'ok' && remote.updatedAt !== meta.revision ? mergeBooks(local, normalize(remote.db), meta) : local
+      const updatedAt = await writeCloud(merged)
+      if (updatedAt == null) {
+        setMode('local')
+        return
+      }
+      showBook(merged, { revision: updatedAt, dirty: false, provisional: false, deleted: { categories: [], periods: [], entries: [], templates: [] } })
+    } finally {
+      cloud.current = false
+    }
   }
 
   async function adopt(sb: SupabaseClient, session: Session) {
@@ -203,13 +227,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    const flush = () => {
-      if (!cloud.current) return
-      window.clearTimeout(timers.current.cloud)
-      void pushCloud(dbRef.current).catch(() => undefined)
+    const onOnline = () => {
+      void reconcile()
     }
-    window.addEventListener('pagehide', flush)
-    return () => window.removeEventListener('pagehide', flush)
+    window.addEventListener('online', onOnline)
+    let removeResume: (() => void) | undefined
+    if (Capacitor.isNativePlatform()) {
+      void App.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) void reconcile()
+      }).then((handle) => {
+        removeResume = () => {
+          void handle.remove()
+        }
+      })
+    }
+    return () => {
+      window.removeEventListener('online', onOnline)
+      removeResume?.()
+    }
+    // reconcile closes over the latest setters and stays stable for the lifetime of the provider.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -219,45 +256,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const config = readConfig()
         const local = loadLocal()
         if (!config) {
-          const remote = await pullCloud()
-          if (cancel) return
-          if (remote === 'down') {
-            const initial = local ?? buildSeed()
-            if (!local) saveLocal(initial)
-            dbRef.current = initial
-            setDb(initial)
-            setMode('local')
+          if (local) {
+            dbRef.current = local
+            setDb(local)
+            const meta = loadMeta()
+            setMode(meta.dirty || meta.provisional || !meta.revision ? 'local' : 'neon')
+            setReady(true)
+            void reconcile()
+            return
+          }
+          if (!navigator.onLine) {
+            const seeded = buildSeed()
+            showBook(seeded, { revision: null, dirty: false, provisional: true, deleted: { categories: [], periods: [], entries: [], templates: [] } })
             setReady(true)
             return
           }
-          let initial: DB
-          try {
-            if (remote !== 'empty') {
-              initial = remote
-              saveLocal(remote)
-            } else if (local) {
-              initial = local
-              await pushCloud(local)
-            } else {
-              initial = buildSeed()
-              saveLocal(initial)
-              await pushCloud(initial)
-            }
-            cloud.current = true
-            dbRef.current = initial
-            setDb(initial)
-            setMode('neon')
-            setReady(true)
-          } catch (err) {
-            const initial = local ?? (remote !== 'empty' ? remote : buildSeed())
-            if (!local && remote === 'empty') saveLocal(initial)
-            dbRef.current = initial
-            setDb(initial)
-            setMode(remote !== 'empty' ? 'neon' : 'local')
-            cloud.current = remote !== 'empty'
-            setReady(true)
-            if (remote === 'empty') setError(err instanceof Error ? err.message : 'No se pudo abrir Neon.')
+          const remote = await readCloud()
+          if (cancel) return
+          if (remote.status === 'ok') {
+            showBook(remote.db, { revision: remote.updatedAt, dirty: false, provisional: false, deleted: { categories: [], periods: [], entries: [], templates: [] } })
+          } else if (remote.status === 'empty') {
+            const seeded = buildSeed()
+            showBook(seeded, { revision: null, dirty: true, provisional: false, deleted: { categories: [], periods: [], entries: [], templates: [] } })
+            void reconcile()
+          } else {
+            const seeded = buildSeed()
+            showBook(seeded, { revision: null, dirty: false, provisional: true, deleted: { categories: [], periods: [], entries: [], templates: [] } })
           }
+          setReady(true)
           return
         }
         const sb = makeClient(config)
@@ -333,6 +359,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       },
       removeCategory: (id) => {
+        noteDeleted('categories', [id])
         const affected = dbRef.current.entries.filter((e) => e.categoryId === id).map((e) => ({ ...e, categoryId: null }))
         commit((current) => ({
           ...current,
@@ -394,6 +421,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       },
       removePeriod: (id) => {
+        noteDeleted('periods', [id])
+        noteDeleted(
+          'entries',
+          dbRef.current.entries.filter((entry) => entry.periodId === id).map((entry) => entry.id),
+        )
         commit((current) => ({
           ...current,
           periods: current.periods.filter((p) => p.id !== id),
@@ -477,6 +509,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       },
       removeEntry: (id) => {
+        noteDeleted('entries', [id])
         commit((current) => ({ ...current, entries: current.entries.filter((e) => e.id !== id) }))
         void remote((sb) => remoteDeleteEntry(sb, id))
       },
@@ -615,6 +648,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         })
       },
       removeTemplate: (id) => {
+        noteDeleted('templates', [id])
+        noteDeleted(
+          'entries',
+          dbRef.current.entries.filter((entry) => entry.templateId === id).map((entry) => entry.id),
+        )
         commit((current) => ({
           ...current,
           templates: current.templates.filter((item) => item.id !== id),

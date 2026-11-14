@@ -1,13 +1,12 @@
 import { useMemo, useState } from 'react'
-import { go } from '../route'
+import { go, goSettings } from '../route'
 import { Mark } from '../icons'
-import { TASK_COLORS, useBoard, type TaskCard } from '../tasks'
+import { useBoard, type TaskCard } from '../tasks'
 
 export function PendientesView() {
   const board = useBoard()
   const [filterId, setFilterId] = useState<string | null>(null)
   const [activeColumn, setActiveColumn] = useState(board.columns[0]?.id ?? '')
-  const [categoriesOpen, setCategoriesOpen] = useState(false)
   const [draft, setDraft] = useState<Draft | null>(null)
 
   const filter = board.categories.find((category) => category.id === filterId) ?? null
@@ -96,8 +95,11 @@ export function PendientesView() {
         <button className="icon-btn cal" aria-label="Calendario" onClick={() => go('calendario')}>
           <Mark name="Calendario" />
         </button>
-        <button className={categoriesOpen ? 'icon-btn on' : 'icon-btn'} aria-label="Administrar categorías" onClick={() => setCategoriesOpen(true)}>
-          <TagIcon />
+        <button className="icon-btn" aria-label="Configuración" onClick={() => goSettings('pendientes')}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M5.8 5.8l1.6 1.6M16.6 16.6l1.6 1.6M18.2 5.8l-1.6 1.6M7.4 16.6l-1.6 1.6" />
+          </svg>
         </button>
       </header>
 
@@ -124,9 +126,6 @@ export function PendientesView() {
           )
         })}
       </div>
-      <button className="text-btn cat-manage" onClick={() => setCategoriesOpen(true)}>
-        Editar categorías
-      </button>
       <p className="filter-status" aria-live="polite">
         {status}
         {filter ? ' · toca otra vez para ver todas' : ''}
@@ -198,25 +197,6 @@ export function PendientesView() {
           )
         })}
       </div>
-
-      {categoriesOpen && (
-        <CategorySheet
-          categories={board.categories}
-          onClose={() => setCategoriesOpen(false)}
-          onAdd={board.addCategory}
-          onUpdate={board.updateCategory}
-          onRemove={(id, name) => {
-            const used = board.cards.some((card) => card.categoryId === id)
-            const note = used
-              ? `¿Borrar “${name}”? Las tareas de esa categoría quedan sin categoría.`
-              : `¿Borrar “${name}”?`
-            if (confirm(note)) {
-              board.removeCategory(id)
-              if (filterId === id) setFilterId(null)
-            }
-          }}
-        />
-      )}
 
       {draft && (
         <div className="sheet-back" onClick={() => setDraft(null)}>
@@ -328,106 +308,11 @@ function formatDay(iso: string) {
   return new Date(year, month - 1, day).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })
 }
 
-function CategorySheet({
-  categories,
-  onClose,
-  onAdd,
-  onUpdate,
-  onRemove,
-}: {
-  categories: { id: string; name: string; color: string }[]
-  onClose: () => void
-  onAdd: (name: string, color: string) => void
-  onUpdate: (id: string, next: { name?: string; color?: string }) => void
-  onRemove: (id: string, name: string) => void
-}) {
-  const [name, setName] = useState('')
-  const [color, setColor] = useState(TASK_COLORS[categories.length % TASK_COLORS.length] ?? TASK_COLORS[0])
-
-  return (
-    <div className="sheet-back" onClick={onClose}>
-      <div className="sheet" role="dialog" aria-label="Categorías" onClick={(event) => event.stopPropagation()}>
-        <div className="sheet-handle" />
-        <h2>Categorías</h2>
-        <p className="hint">Crea las que uses. En el tablero, toca una para ver solo esas tareas.</p>
-        <form
-          className="stack"
-          onSubmit={(event) => {
-            event.preventDefault()
-            onAdd(name, color)
-            setName('')
-            setColor(TASK_COLORS[(categories.length + 1) % TASK_COLORS.length] ?? TASK_COLORS[0])
-          }}
-        >
-          <label className="field">
-            Nueva categoría
-            <input required value={name} placeholder="Por ejemplo, Trámites" onChange={(event) => setName(event.target.value)} />
-          </label>
-          <div className="swatches" aria-label="Color de la categoría">
-            {TASK_COLORS.map((swatch) => (
-              <button
-                key={swatch}
-                type="button"
-                className={swatch === color ? 'swatch on' : 'swatch'}
-                style={{ background: swatch }}
-                aria-label={swatch}
-                onClick={() => setColor(swatch)}
-              />
-            ))}
-          </div>
-          <button className="btn primary" type="submit">
-            Agregar categoría
-          </button>
-        </form>
-        <ul className="task-cats">
-          {categories.map((category) => (
-            <li key={category.id}>
-              <i className="dot" style={{ background: category.color }} />
-              <input
-                aria-label={`Nombre de ${category.name}`}
-                value={category.name}
-                onChange={(event) => onUpdate(category.id, { name: event.target.value })}
-              />
-              <button className="del" aria-label={`Borrar ${category.name}`} onClick={() => onRemove(category.id, category.name)}>
-                ×
-              </button>
-              <div className="swatches mini">
-                {TASK_COLORS.map((swatch) => (
-                  <button
-                    key={swatch}
-                    type="button"
-                    className={swatch === category.color ? 'swatch on' : 'swatch'}
-                    style={{ background: swatch }}
-                    aria-label={`Color ${swatch} para ${category.name}`}
-                    onClick={() => onUpdate(category.id, { color: swatch })}
-                  />
-                ))}
-              </div>
-            </li>
-          ))}
-        </ul>
-        <button className="btn" type="button" onClick={onClose}>
-          Listo
-        </button>
-      </div>
-    </div>
-  )
-}
-
 function HomeIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M4 11.5 12 4l8 7.5" />
       <path d="M7 10.5V20h10v-9.5" />
-    </svg>
-  )
-}
-
-function TagIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M4 12V5h7l9 9-7 7-9-9z" />
-      <circle cx="9" cy="9" r="1.2" fill="currentColor" stroke="none" />
     </svg>
   )
 }

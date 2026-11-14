@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { go, openCuentas, openPrivate } from '../route'
+import { go, goSettings, openCuentas, openPrivate } from '../route'
 import { Mark } from '../icons'
 
 export function HomeView({ onLogout }: { onLogout: () => void }) {
@@ -24,6 +24,12 @@ export function HomeView({ onLogout }: { onLogout: () => void }) {
           </button>
           <small>Elige un módulo</small>
         </div>
+        <button className="icon-btn" aria-label="Configuración" onClick={() => goSettings('general')}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M5.8 5.8l1.6 1.6M16.6 16.6l1.6 1.6M18.2 5.8l-1.6 1.6M7.4 16.6l-1.6 1.6" />
+          </svg>
+        </button>
         <button className="icon-btn cal" aria-label="Calendario" onClick={() => go('calendario')}>
           <Mark name="Calendario" />
         </button>

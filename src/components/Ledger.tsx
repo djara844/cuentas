@@ -102,8 +102,8 @@ export function Ledger({
           />
           {onAddTerm && (
             <Group
-              label="Plazo"
-              addLabel="Agregar plazo"
+              label="Periódico"
+              addLabel="Agregar periódico"
               reveal={revealTerm}
               term
               onAdd={() => {
@@ -283,10 +283,13 @@ function EntryRow({
       value={entry.categoryId ?? ''}
       onChange={(event) => {
         if (event.target.value === '__new__') onCreateStart()
-        else onChange({ categoryId: event.target.value || null })
+        else {
+          const category = categories.find((item) => item.id === event.target.value)
+          if (category) onChange({ categoryId: category.id })
+        }
       }}
     >
-      <option value="">Sin categoría</option>
+      {!entry.categoryId && <option value="">Categoría</option>}
       {categories.map((category) => (
         <option key={category.id} value={category.id}>
           {category.name}
@@ -324,7 +327,16 @@ function EntryRow({
           </button>
         </form>
       ) : (
-        categorySelect
+        <div className="row-main">
+          <input
+            className="desc"
+            value={entry.description}
+            placeholder="Ítem"
+            aria-label="Ítem"
+            onChange={(event) => onChange({ description: event.target.value })}
+          />
+          {categorySelect}
+        </div>
       )}
       {entry.termTotal != null && entry.termIndex != null && <em className="term-note">{entry.termIndex}/{entry.termTotal}</em>}
       {dated && <DueField value={entry.dueDay} onCommit={(dueDay) => onChange({ dueDay })} />}
@@ -370,12 +382,11 @@ function TermForm({
   categories: Category[]
   onSubmit: (input: { description: string; categoryId: string | null; amount: number; startDate: string; months: number }) => void
 }) {
-  const today = new Date()
-  const [description, setDescription] = useState('')
-  const [date, setDate] = useState(isoDate(today.getFullYear(), today.getMonth(), today.getDate()))
-  const [months, setMonths] = useState('3')
+  const [itemName, setItemName] = useState('')
+  const [date, setDate] = useState('')
+  const [months, setMonths] = useState('')
   const [amountText, setAmountText] = useState('')
-  const [categoryId, setCategoryId] = useState(categories[0]?.id ?? '')
+  const [categoryId, setCategoryId] = useState('')
   const amount = parseCOP(amountText)
 
   return (
@@ -383,23 +394,23 @@ function TermForm({
       className="quiet-form term-form"
       onSubmit={(event) => {
         event.preventDefault()
-        if (amount <= 0 || !date) return
-        const count = Math.max(1, Math.min(24, Number(months) || 1))
-        const category = categories.find((item) => item.id === categoryId)
+        const count = Math.max(1, Math.min(24, Number(months) || 0))
+        if (amount <= 0 || !date || !categoryId || !itemName.trim() || count < 1) return
         onSubmit({
-          description: description.trim() || category?.name || '',
-          categoryId: categoryId || null,
+          description: itemName.trim(),
+          categoryId,
           amount,
           startDate: date,
           months: count,
         })
       }}
     >
-      <input value={description} autoFocus placeholder="Qué se paga" aria-label="Qué se paga" onChange={(event) => setDescription(event.target.value)} />
+      <input value={itemName} autoFocus placeholder="Ítem" aria-label="Ítem" onChange={(event) => setItemName(event.target.value)} />
       <div className="term-line">
         <label>
           Categoría
-          <select aria-label="Categoría" value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
+          <select aria-label="Categoría" value={categoryId} onChange={(event) => setCategoryId(event.target.value)} required>
+            <option value="">Categoría</option>
             {categories.map((category) => (
               <option key={category.id} value={category.id}>
                 {category.name}
@@ -408,8 +419,8 @@ function TermForm({
           </select>
         </label>
         <label>
-          Meses
-          <input inputMode="numeric" aria-label="Meses" value={months} onChange={(event) => setMonths(event.target.value.replace(/\D/g, '').slice(0, 2))} />
+          Plazo
+          <input inputMode="numeric" aria-label="Plazo en meses" placeholder="Meses" value={months} onChange={(event) => setMonths(event.target.value.replace(/\D/g, '').slice(0, 2))} />
         </label>
       </div>
       <label className="term-amount">
@@ -426,15 +437,11 @@ function TermForm({
           onChange={(event) => setAmountText(event.target.value)}
         />
       </label>
-      <button className="btn primary term-save" type="submit" disabled={amount <= 0 || !date}>
+      <button className="btn primary term-save" type="submit" disabled={amount <= 0 || !date || !categoryId || !itemName.trim() || Number(months) < 1}>
         Guardar
       </button>
     </form>
   )
-}
-
-function isoDate(year: number, month: number, day: number): string {
-  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 }
 
 export { SWATCHES }

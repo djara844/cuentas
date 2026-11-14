@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { StoreProvider, useStore } from './store'
-import { go, goPeriod, readRoute, type Route } from './route'
+import { go, goPeriod, goSettings, readRoute, type Route } from './route'
 import { periodStats } from './types'
 import { formatCOP } from './money'
 import { PeriodView } from './components/PeriodView'
@@ -46,7 +46,6 @@ function Shell({ onLogout }: { onLogout: () => void }) {
 
   const periods = store.db.periods.filter((p) => p.year === year).sort((a, b) => a.sortOrder - b.sortOrder)
   const selected = store.db.periods.find((p) => p.id === route.periodId) ?? null
-  const [sheet, setSheet] = useState(false)
   const openedPeriod = useRef(false)
 
   useEffect(() => {
@@ -125,7 +124,28 @@ function Shell({ onLogout }: { onLogout: () => void }) {
 
   if (store.needsAuth) return <AuthScreen />
 
-  const moreOn = route.view === 'categorias' || route.view === 'ajustes'
+  if (route.view === 'ajustes' && route.settings !== 'cuentas') {
+    const back = route.settings === 'pendientes' ? 'pendientes' : 'inicio'
+    return (
+      <div className="app">
+        <header className="topbar">
+          <button className="icon-btn" aria-label={back === 'pendientes' ? 'Pendientes' : 'Inicio'} onClick={() => go(back)}>
+            <Glyph>
+              <path d="M4 11.5 12 4l8 7.5" />
+              <path d="M7 10.5V20h10v-9.5" />
+            </Glyph>
+          </button>
+          <div className="brand">
+            <span>Configuración</span>
+            <small>{route.settings === 'pendientes' ? 'Pendientes' : 'General'}</small>
+          </div>
+        </header>
+        <main className="main">
+          <SettingsView scope={route.settings ?? 'general'} />
+        </main>
+      </div>
+    )
+  }
 
   return (
     <div className="app">
@@ -164,11 +184,14 @@ function Shell({ onLogout }: { onLogout: () => void }) {
             ))}
           </select>
         </label>
-        <button className={moreOn || sheet ? 'icon-btn on' : 'icon-btn'} aria-label="Más opciones" onClick={() => setSheet(true)}>
+        <button
+          className={route.view === 'ajustes' || route.view === 'categorias' || route.view === 'recurrentes' ? 'icon-btn on' : 'icon-btn'}
+          aria-label="Configuración"
+          onClick={() => goSettings('cuentas')}
+        >
           <Glyph>
-            <circle cx="12" cy="6" r="1.2" fill="currentColor" stroke="none" />
-            <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
-            <circle cx="12" cy="18" r="1.2" fill="currentColor" stroke="none" />
+            <circle cx="12" cy="12" r="3" />
+            <path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M5.8 5.8l1.6 1.6M16.6 16.6l1.6 1.6M18.2 5.8l-1.6 1.6M7.4 16.6l-1.6 1.6" />
           </Glyph>
         </button>
       </header>
@@ -193,7 +216,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
         {route.view === 'reportes' && <ReportsView year={year} />}
         {route.view === 'recurrentes' && <RecurrentesView />}
         {route.view === 'categorias' && <CategoriesView />}
-        {route.view === 'ajustes' && <SettingsView />}
+        {route.view === 'ajustes' && route.settings === 'cuentas' && <SettingsView scope="cuentas" />}
         {route.view === 'periodo' && selected && (
           <PeriodView period={selected} />
         )}
@@ -240,49 +263,6 @@ function Shell({ onLogout }: { onLogout: () => void }) {
           Fijos
         </button>
       </nav>
-
-      {sheet && (
-        <div className="sheet-back" onClick={() => setSheet(false)}>
-          <div className="sheet" role="dialog" aria-label="Más opciones" onClick={(event) => event.stopPropagation()}>
-            <div className="sheet-title">
-              <h2>Más</h2>
-              <button className="text-btn" type="button" onClick={() => setSheet(false)}>
-                Cerrar
-              </button>
-            </div>
-            <button
-              className="sheet-item"
-              onClick={() => {
-                setSheet(false)
-                go('categorias')
-              }}
-            >
-              <span>Categorías</span>
-              <small>Colores y grupos</small>
-            </button>
-            <button
-              className="sheet-item"
-              onClick={() => {
-                setSheet(false)
-                go('ajustes')
-              }}
-            >
-              <span>Ajustes</span>
-              <small>Nube, copia y respaldo</small>
-            </button>
-            <button
-              className="sheet-item"
-              onClick={() => {
-                setSheet(false)
-                onLogout()
-              }}
-            >
-              <span>Cerrar sesión</span>
-              <small>Volver al acceso</small>
-            </button>
-          </div>
-        </div>
-      )}
 
       {store.error && (
         <div className="toast" role="status">

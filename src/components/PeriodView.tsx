@@ -12,11 +12,12 @@ export function PeriodView({ period }: { period: Period }) {
   const month = MONTHS[period.coveredMonth]
 
   function addFixed(kind: Kind) {
+    const category = categoriesOf(store.db, kind)[0]
     const created = store.addTemplate({
       kind,
       description: '',
       amount: 0,
-      categoryId: categoriesOf(store.db, kind)[0]?.id ?? null,
+      categoryId: category?.id ?? null,
     })
     return created.entries.find((entry) => entry.periodId === period.id)?.id ?? ''
   }
@@ -29,24 +30,10 @@ export function PeriodView({ period }: { period: Period }) {
           <h1 className="period-title">{month}</h1>
           <p className="cal-range">1 – {calendar.days} de {month.toLowerCase()}</p>
         </div>
-        <dl className="cal-facts">
-          <div>
-            <dt>Días hábiles</dt>
-            <dd>{calendar.businessDays}</dd>
-          </div>
-          <div>
-            <dt>Festivos</dt>
-            <dd>{calendar.holidays.length}</dd>
-          </div>
-          <div>
-            <dt>Ingresos</dt>
-            <dd>{formatCOP(stats.ingresos)}</dd>
-          </div>
-          <div>
-            <dt>Gastos</dt>
-            <dd>{formatCOP(stats.gastos)}</dd>
-          </div>
-        </dl>
+        <p className="month-note">
+          <span><b>{calendar.businessDays}</b> días hábiles</span>
+          <span><b>{calendar.holidays.length}</b> festivos</span>
+        </p>
         {calendar.holidays.length > 0 ? (
           <ul className="cal-holidays">
             {calendar.holidays.map((holiday) => (
@@ -84,6 +71,7 @@ export function PeriodView({ period }: { period: Period }) {
           total={stats.ingresos}
           onAdd={() => store.addEntry({ periodId: period.id, kind: 'ingreso', categoryId: categoriesOf(store.db, 'ingreso')[0]?.id ?? null }).id}
           onAddFixed={() => addFixed('ingreso')}
+          onAddTerm={(input) => store.addTerm({ ...input, periodId: period.id, kind: 'ingreso' })}
           onCreateCategory={(name) => store.addCategory({ name, kind: 'ingreso', color: '#1f7a45' })}
           onChange={(id, patch) => store.updateEntry(id, patch)}
           onDelete={(id) => store.removeEntry(id)}

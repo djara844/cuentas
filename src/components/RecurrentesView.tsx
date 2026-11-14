@@ -12,9 +12,9 @@ export function RecurrentesView() {
     <div className="wrap">
       <header className="page-head">
         <div>
-          <p className="kicker">En todos los meses</p>
+          <p className="kicker">Cuentas</p>
           <h1 className="page-title">Fijos</h1>
-          <p className="formula">Aquí defines lo que se repite. También puedes agregarlo desde el mes, dentro de Fijos. Un variable se crea solo en ese mes, dentro de Variables.</p>
+          <p className="formula">Estos ítems entran en todos los meses. En el mes también puedes dejar uno variable o periódico.</p>
         </div>
       </header>
       <div className="cat-board">
@@ -22,7 +22,7 @@ export function RecurrentesView() {
           <TemplateColumn key={`${kind.id}-cerrado`} kind={kind.id} label={kind.label} />
         ))}
       </div>
-      <p className="hint alone">{store.db.templates.length} fijos, presentes en todos los periodos.</p>
+      <p className="hint alone">{store.db.templates.filter((item) => item.kind !== 'servicio').length} fijos, presentes en todos los periodos.</p>
     </div>
   )
 }
@@ -53,32 +53,33 @@ function TemplateColumn({ kind, label }: { kind: Kind; label: string }) {
       {open && (
         <ul className="cat-list">
           {templates.map((template, index) => {
-            const color = categories.find((category) => category.id === template.categoryId)?.color ?? SWATCHES[index % SWATCHES.length]
+            const category = categories.find((item) => item.id === template.categoryId)
+            const color = category?.color ?? SWATCHES[index % SWATCHES.length]
+            const itemName = template.description
             return (
               <li key={template.id} className="recur-item">
                 <div className="recur-name">
                   <i style={{ background: color }} />
                   <input
-                    value={template.description}
-                    aria-label={`Nombre de ${template.description}`}
+                    value={itemName}
+                    placeholder="Ítem"
+                    aria-label={`Ítem ${itemName || category?.name || ''}`}
                     onChange={(event) => store.updateTemplate(template.id, { description: event.target.value })}
                   />
-                </div>
-                <div className="recur-line">
-                  <select
-                    aria-label={`Categoría de ${template.description}`}
-                    value={template.categoryId ?? ''}
-                    onChange={(event) => store.updateTemplate(template.id, { categoryId: event.target.value || null })}
-                  >
-                    <option value="">Sin categoría</option>
-                    {categories.map((category) => (
-                      <option key={category.id} value={category.id}>
-                        {category.name}
-                      </option>
-                    ))}
-                  </select>
                   <MoneyField value={template.amount} onCommit={(next) => store.updateTemplate(template.id, { amount: next })} />
                 </div>
+                <select
+                  aria-label={`Categoría de ${itemName || 'este ítem'}`}
+                  value={template.categoryId ?? ''}
+                  onChange={(event) => store.updateTemplate(template.id, { categoryId: event.target.value || null })}
+                >
+                  {!template.categoryId && <option value="">Categoría</option>}
+                  {categories.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
                 <div className="recur-actions">
                   <button type="button" className="btn" onClick={() => store.applyTemplateAmount(template.id)}>
                     Poner este valor en todos
@@ -105,25 +106,25 @@ function TemplateColumn({ kind, label }: { kind: Kind; label: string }) {
             className="cat-form"
             onSubmit={(event) => {
               event.preventDefault()
-              if (!name.trim()) return
-              store.addTemplate({ kind, description: name.trim(), amount, categoryId: categoryId || null })
+              if (!name.trim() || !categoryId) return
+              store.addTemplate({ kind, description: name.trim(), amount, categoryId })
               setName('')
               setAmount(0)
               setCreating(false)
             }}
           >
-            <input value={name} autoFocus placeholder="Nombre" aria-label={`Nuevo fijo de ${label}`} onChange={(event) => setName(event.target.value)} />
-            <div className="recur-line">
-              <select aria-label="Categoría inicial" value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
-                <option value="">Sin categoría</option>
-                {categories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                  </option>
-                ))}
-              </select>
+            <div className="recur-name">
+              <input value={name} autoFocus placeholder="Ítem" aria-label={`Nuevo ítem de ${label}`} onChange={(event) => setName(event.target.value)} />
               <MoneyField value={amount} onCommit={setAmount} />
             </div>
+            <select aria-label="Categoría" value={categoryId} onChange={(event) => setCategoryId(event.target.value)} required>
+              {!categoryId && <option value="">Categoría</option>}
+              {categories.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
             <div className="form-actions">
               <button className="btn" type="button" onClick={() => setCreating(false)}>
                 Cancelar

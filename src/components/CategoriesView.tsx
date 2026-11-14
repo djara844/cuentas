@@ -11,9 +11,9 @@ export function CategoriesView() {
     <div className="wrap">
       <header className="page-head">
         <div>
-          <p className="kicker">Administrar</p>
+          <p className="kicker">Cuentas</p>
           <h1 className="page-title">Categorías</h1>
-          <p className="formula">Agrupan sueldos, gastos y servicios. Ábrelas para crear, renombrar o borrar.</p>
+          <p className="formula">Grupos. El gasto o el ingreso es el ítem, y pertenece a una de estas.</p>
         </div>
       </header>
       <div className="cat-board">
@@ -21,7 +21,7 @@ export function CategoriesView() {
           <CategoryColumn key={`${kind.id}-cerrado`} kind={kind.id} label={kind.label} />
         ))}
       </div>
-      <p className="hint alone">{store.db.categories.length} categorías en el libro.</p>
+      <p className="hint alone">{store.db.categories.filter((item) => item.kind !== 'servicio').length} categorías en el libro.</p>
     </div>
   )
 }
@@ -59,7 +59,6 @@ function CategoryColumn({ kind, label }: { kind: Kind; label: string }) {
                   aria-label={`Nombre de ${category.name}`}
                   onChange={(event) => store.updateCategory(category.id, { name: event.target.value })}
                 />
-                <small>{used}</small>
                 <button
                   className="del"
                   aria-label={`Eliminar ${category.name}`}

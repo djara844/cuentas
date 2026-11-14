@@ -44,14 +44,13 @@ export function ReportsView({ year }: { year: number }) {
       rows,
       totals,
       gastos: grouped('gasto'),
-      servicios: grouped('servicio'),
       ingresos: grouped('ingreso'),
       best,
       tight,
       average: active.length ? Math.round(totals.libre / active.length) : 0,
       committed: totals.ingresos > 0 ? Math.round(((totals.gastos + totals.servicios) / totals.ingresos) * 100) : 0,
       maxLibre: Math.max(1, ...rows.map((row) => Math.abs(row.stats.libre))),
-      maxSpent: Math.max(1, ...rows.map((row) => row.stats.gastos + row.stats.servicios)),
+      maxSpent: Math.max(1, ...rows.map((row) => row.stats.gastos)),
       months: active.length,
     }
   }, [store.db, year])
@@ -83,9 +82,8 @@ export function ReportsView({ year }: { year: number }) {
       <section className="panel">
         <div className="panel-top">
           <h2>Lo que se ha gastado</h2>
-          <strong>{formatCOP(report.totals.gastos + report.totals.servicios)}</strong>
+          <strong>{formatCOP(report.totals.gastos)}</strong>
         </div>
-        <p className="hint">Gastos {formatCOP(report.totals.gastos)} · Servicios {formatCOP(report.totals.servicios)}</p>
       </section>
 
       <Rank title="Gastos por categoría" items={report.gastos} total={report.totals.gastos} />
@@ -99,12 +97,12 @@ export function ReportsView({ year }: { year: number }) {
             <li key={row.period.id}>
               <div className="bar-label">
                 <span>{MONTHS[row.period.coveredMonth]}</span>
-                <strong>{formatCOP(row.stats.gastos + row.stats.servicios)}</strong>
+                <strong>{formatCOP(row.stats.gastos)}</strong>
               </div>
               <div className="bar" aria-hidden="true">
                 <span
                   style={{
-                    width: `${Math.max(row.stats.gastos + row.stats.servicios > 0 ? 6 : 0, ((row.stats.gastos + row.stats.servicios) / report.maxSpent) * 100)}%`,
+                    width: `${Math.max(row.stats.gastos > 0 ? 6 : 0, (row.stats.gastos / report.maxSpent) * 100)}%`,
                     background: '#fbbf24',
                   }}
                 />
@@ -128,10 +126,6 @@ export function ReportsView({ year }: { year: number }) {
         <article className="stat">
           <p>Gastos</p>
           <strong>{formatCOP(report.totals.gastos)}</strong>
-        </article>
-        <article className="stat">
-          <p>Servicios</p>
-          <strong>{formatCOP(report.totals.servicios)}</strong>
         </article>
         <article className={report.totals.libre < 0 ? 'stat libre neg' : 'stat libre pos'}>
           <p>Libre</p>
@@ -161,7 +155,6 @@ export function ReportsView({ year }: { year: number }) {
         </ul>
       </section>
 
-      <Rank title="Servicios" items={report.servicios} total={report.totals.servicios} />
       <Rank title="De dónde entró" items={report.ingresos} total={report.totals.ingresos} />
 
       <div className="pair">

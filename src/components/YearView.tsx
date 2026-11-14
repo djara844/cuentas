@@ -48,10 +48,6 @@ export function YearView({ year, onYear }: { year: number; onYear: (year: number
           <span>Gastos del año</span>
           <strong>{formatCOP(totals.gastos)}</strong>
         </article>
-        <article className="stat">
-          <span>Servicios del año</span>
-          <strong>{formatCOP(totals.servicios)}</strong>
-        </article>
         <article className={totals.libre < 0 ? 'stat libre neg' : 'stat libre pos'}>
           <span>Libre del año</span>
           <strong>{formatCOP(totals.libre)}</strong>
@@ -73,10 +69,6 @@ export function YearView({ year, onYear }: { year: number; onYear: (year: number
                 <div>
                   <dt>Gastos</dt>
                   <dd>{formatCOP(stats.gastos)}</dd>
-                </div>
-                <div>
-                  <dt>Servicios</dt>
-                  <dd>{formatCOP(stats.servicios)}</dd>
                 </div>
               </dl>
               <p className={stats.libre < 0 ? 'card-libre neg' : 'card-libre'}>{formatCOP(stats.libre)}</p>
