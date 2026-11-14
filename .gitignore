@@ -1,0 +1,17 @@
+node_modules
+supabase/.temp
+dist
+.DS_Store
+.env
+.env.local
+.env.*.local
+*.tsbuildinfo
+_preview
+.vercel
+android/app/build
+android/build
+android/.gradle
+android/local.properties
+android/.idea
+android/captures
+*.apk
