@@ -216,15 +216,15 @@ h1, h2, p { margin: 0; }
 .head-actions { display: flex; gap: 8px; }
 .head-actions .btn { flex: 1; }
 
-.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
 .stat, .panel, .hero, .month-card, .auth-card, .modal {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 20px;
 }
-.stat { padding: 14px 14px 13px; display: grid; gap: 8px; }
+.stat { padding: 12px 8px; display: grid; gap: 6px; min-width: 0; }
 .stat p, .hero p, .panel.mini p { color: var(--muted); font-size: 12px; }
-.stat strong { font-size: 16px; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
+.stat strong { font-size: 15px; font-variant-numeric: tabular-nums; letter-spacing: -0.04em; }
 .stat.libre strong { font-size: 18px; }
 .stat.libre.pos strong, .hero strong { color: var(--green); }
 .stat.libre.neg strong, .hero.neg strong { color: var(--red); }
@@ -1034,7 +1034,7 @@ h1, h2, p { margin: 0; }
 .swatches.mini .swatch { width: 22px; height: 22px; }
 
 @media (max-width: 360px) {
-  .year-grid, .pair, .stats { grid-template-columns: 1fr; }
+  .year-grid, .pair { grid-template-columns: 1fr; }
   .money { width: 112px; }
   .tab { font-size: 10px; }
   .t-col { flex-basis: 92%; }

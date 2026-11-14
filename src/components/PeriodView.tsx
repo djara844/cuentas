@@ -70,10 +70,6 @@ export function PeriodView({ period }: { period: Period }) {
           <span>Gastos</span>
           <strong>{formatCOP(stats.gastos)}</strong>
         </article>
-        <article className="stat">
-          <span>Servicios</span>
-          <strong>{formatCOP(stats.servicios)}</strong>
-        </article>
         <article className={stats.libre < 0 ? 'stat libre neg' : 'stat libre pos'}>
           <span>Libre</span>
           <strong>{formatCOP(stats.libre)}</strong>
@@ -101,20 +97,8 @@ export function PeriodView({ period }: { period: Period }) {
           onAddFixed={() => addFixed('gasto')}
           onCreateCategory={(name) => store.addCategory({ name, kind: 'gasto', color: '#9a3412' })}
           payable
+          dated
           onAddTerm={(input) => store.addTerm({ ...input, periodId: period.id, kind: 'gasto' })}
-          onChange={(id, patch) => store.updateEntry(id, patch)}
-          onDelete={(id) => store.removeEntry(id)}
-        />
-        <Ledger
-          title="Servicios"
-          entries={store.db.entries.filter((e) => e.periodId === period.id && e.kind === 'servicio').sort((a, b) => a.sortOrder - b.sortOrder)}
-          categories={categoriesOf(store.db, 'servicio')}
-          total={stats.servicios}
-          onAdd={() => store.addEntry({ periodId: period.id, kind: 'servicio', categoryId: categoriesOf(store.db, 'servicio')[0]?.id ?? null }).id}
-          onAddFixed={() => addFixed('servicio')}
-          onCreateCategory={(name) => store.addCategory({ name, kind: 'servicio', color: '#2b6cb0' })}
-          payable
-          onAddTerm={(input) => store.addTerm({ ...input, periodId: period.id, kind: 'servicio' })}
           onChange={(id, patch) => store.updateEntry(id, patch)}
           onDelete={(id) => store.removeEntry(id)}
         />

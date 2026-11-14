@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { StoreProvider, useStore } from './store'
 import { go, goPeriod, readRoute, type Route } from './route'
 import { periodStats } from './types'
@@ -16,6 +16,7 @@ import { PendientesView } from './components/PendientesView'
 import { VaultView } from './components/VaultView'
 import { CalendarView } from './components/CalendarView'
 import { isLoggedIn, logout } from './session'
+import { queueDayAlerts } from './reminders'
 import { MONTHS } from './types'
 
 function useRoute(): Route {
@@ -46,6 +47,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
   const periods = store.db.periods.filter((p) => p.year === year).sort((a, b) => a.sortOrder - b.sortOrder)
   const selected = store.db.periods.find((p) => p.id === route.periodId) ?? null
   const [sheet, setSheet] = useState(false)
+  const openedPeriod = useRef(false)
 
   useEffect(() => {
     if (!store.ready || store.needsAuth) return
@@ -54,27 +56,34 @@ function Shell({ onLogout }: { onLogout: () => void }) {
 
   useEffect(() => {
     if (!store.ready || store.needsAuth) return
-    if (route.view !== 'periodo' || route.periodId) return
+    if (route.view !== 'periodo') return
+    if (openedPeriod.current && route.periodId) return
+    openedPeriod.current = true
     const today = new Date()
-    const current = store.db.periods.find((p) => p.year === today.getFullYear() && p.coveredMonth === today.getMonth())
-    const match = current ?? store.db.periods.slice().sort((a, b) => a.sortOrder - b.sortOrder)[0]
-    if (match) {
-      setYear(match.year)
-      location.replace(`#/p/${match.id}`)
-    }
-  }, [store.ready, store.needsAuth, store.db.periods, currentYear, route.view, route.periodId])
+    const months = store.ensureYear(today.getFullYear())
+    const match = months.find((period) => period.coveredMonth === today.getMonth())
+    if (!match) return
+    setYear(today.getFullYear())
+    if (route.periodId !== match.id) location.replace(`#/p/${match.id}`)
+  }, [store.ready, store.needsAuth, route.view, route.periodId, store])
 
   useEffect(() => {
     if (route.view !== 'periodo') return
     document.querySelector('.chip.on')?.scrollIntoView({ inline: 'center', block: 'nearest' })
   }, [route.view, selected?.id, year])
 
+  useEffect(() => {
+    if (!store.ready) return
+    queueDayAlerts()
+  }, [store.ready, store.db])
+
   function openMes() {
     const today = new Date()
-    const now = year === today.getFullYear() ? periods.find((period) => period.coveredMonth === today.getMonth()) : null
-    const current = now?.id ?? (selected && selected.year === year ? selected.id : periods[0]?.id)
-    if (current) goPeriod(current)
-    else go('anio')
+    const months = store.ensureYear(today.getFullYear())
+    const match = months.find((period) => period.coveredMonth === today.getMonth()) ?? months[0]
+    if (!match) return
+    setYear(today.getFullYear())
+    goPeriod(match.id)
   }
 
   if (route.view === 'inicio') {

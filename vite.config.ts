@@ -6,6 +6,11 @@ import { ledgerApi } from './server/ledgerPlugin'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   return {
+  server: {
+    watch: {
+      ignored: ['**/android/**', '**/dist/**'],
+    },
+  },
   plugins: [
     ledgerApi(env.DATABASE_URL),
     react(),

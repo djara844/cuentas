@@ -68,12 +68,17 @@ async function pullCloud(): Promise<'down' | 'empty' | DB> {
 }
 
 async function pushCloud(next: DB) {
-  const res = await fetch('/api/ledger', {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(next),
-    keepalive: true,
-  })
+  let res: Response
+  try {
+    res = await fetch('/api/ledger', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(next),
+      keepalive: true,
+    })
+  } catch {
+    throw new Error('No se pudo guardar en Neon.')
+  }
   if (!res.ok) {
     const message = res.status === 400 ? 'El libro no se guardó: llegó incompleto.' : 'No se pudo guardar en Neon.'
     void fetch('/api/logs', {
@@ -143,6 +148,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   function report(err: unknown) {
     const message = err instanceof Error ? err.message : 'No se pudo guardar en la base de datos.'
+    const text = message.toLowerCase()
+    if (text.includes('fetch') || text.includes('network') || text.includes('neon')) {
+      setError('No se pudo guardar en Neon. El cambio quedó en este teléfono.')
+      return
+    }
     setError(`${authMessage(message)} El cambio quedó en este navegador.`)
   }
 
@@ -222,12 +232,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }
           let initial: DB
           try {
-            if (local) {
-              initial = local
-              await pushCloud(local)
-            } else if (remote !== 'empty') {
+            if (remote !== 'empty') {
               initial = remote
               saveLocal(remote)
+            } else if (local) {
+              initial = local
+              await pushCloud(local)
             } else {
               initial = buildSeed()
               saveLocal(initial)
@@ -239,13 +249,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             setMode('neon')
             setReady(true)
           } catch (err) {
-            const initial = local ?? buildSeed()
-            if (!local) saveLocal(initial)
+            const initial = local ?? (remote !== 'empty' ? remote : buildSeed())
+            if (!local && remote === 'empty') saveLocal(initial)
             dbRef.current = initial
             setDb(initial)
-            setMode('local')
+            setMode(remote !== 'empty' ? 'neon' : 'local')
+            cloud.current = remote !== 'empty'
             setReady(true)
-            setError(err instanceof Error ? err.message : 'No se pudo abrir Neon.')
+            if (remote === 'empty') setError(err instanceof Error ? err.message : 'No se pudo abrir Neon.')
           }
           return
         }

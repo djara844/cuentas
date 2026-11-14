@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { queueDayAlerts } from './reminders'
 import { uid } from './types'
 
 export const TASK_COLORS = ['#38bdf8', '#22d3ee', '#818cf8', '#c084fc', '#f472b6', '#fb7185', '#fb923c', '#fbbf24', '#2dd4bf', '#60a5fa', '#a78bfa', '#94a3b8']
@@ -129,6 +130,7 @@ export function useBoard() {
 
   useEffect(() => {
     localStorage.setItem(KEY, JSON.stringify(board))
+    queueDayAlerts()
   }, [board])
 
   function patch(recipe: (current: Board) => Board) {

@@ -17,6 +17,7 @@ export function Ledger({
   onChange,
   onDelete,
   payable = false,
+  dated = false,
 }: {
   title: string
   entries: Entry[]
@@ -29,6 +30,7 @@ export function Ledger({
   onChange: (id: string, patch: Partial<Pick<Entry, 'description' | 'amount' | 'categoryId' | 'paid' | 'dueDay'>>) => void
   onDelete: (id: string) => void
   payable?: boolean
+  dated?: boolean
 }) {
   const [focusId, setFocusId] = useState<string | null>(null)
   const [creatingFor, setCreatingFor] = useState<string | null>(null)
@@ -70,6 +72,7 @@ export function Ledger({
             focusId={focusId}
             creatingFor={creatingFor}
             payable={payable}
+            dated={dated}
             onCreateStart={setCreatingFor}
             onCreateCancel={() => setCreatingFor(null)}
             onCreateCategory={onCreateCategory}
@@ -90,6 +93,7 @@ export function Ledger({
             focusId={focusId}
             creatingFor={creatingFor}
             payable={payable}
+            dated={dated}
             onCreateStart={setCreatingFor}
             onCreateCancel={() => setCreatingFor(null)}
             onCreateCategory={onCreateCategory}
@@ -111,6 +115,7 @@ export function Ledger({
               focusId={focusId}
               creatingFor={creatingFor}
               payable={payable}
+              dated={dated}
               onCreateStart={setCreatingFor}
               onCreateCancel={() => setCreatingFor(null)}
               onCreateCategory={onCreateCategory}
@@ -142,6 +147,7 @@ function Group({
   focusId,
   creatingFor,
   payable,
+  dated,
   onCreateStart,
   onCreateCancel,
   onCreateCategory,
@@ -159,6 +165,7 @@ function Group({
   focusId: string | null
   creatingFor: string | null
   payable: boolean
+  dated: boolean
   onCreateStart: (id: string) => void
   onCreateCancel: () => void
   onCreateCategory: (name: string) => Category
@@ -212,6 +219,7 @@ function Group({
             onCreateCancel()
           }}
           payable={payable}
+          dated={dated}
           onChange={(patch) => onChange(entry.id, patch)}
           onDelete={() => onDelete(entry.id)}
         />
@@ -245,6 +253,7 @@ function EntryRow({
   onChange,
   onDelete,
   payable,
+  dated,
 }: {
   entry: Entry
   categories: Category[]
@@ -256,11 +265,11 @@ function EntryRow({
   onChange: (patch: Partial<Pick<Entry, 'description' | 'amount' | 'categoryId' | 'paid' | 'dueDay'>>) => void
   onDelete: () => void
   payable: boolean
+  dated: boolean
 }) {
   const [name, setName] = useState('')
   const selected = categories.find((c) => c.id === entry.categoryId)
   const title = entry.description.trim()
-  const distinct = title.length > 0 && title.toLowerCase() !== (selected?.name ?? '').toLowerCase()
 
   useEffect(() => {
     if (!creating) setName('')
@@ -268,9 +277,9 @@ function EntryRow({
 
   const categorySelect = (
     <select
-      className={distinct ? 'swatch-select' : 'cat'}
+      className="cat"
       aria-label="Categoría"
-      style={distinct ? undefined : { borderLeftColor: selected?.color ?? '#d9d0c3' }}
+      style={{ borderLeftColor: selected?.color ?? '#d9d0c3' }}
       value={entry.categoryId ?? ''}
       onChange={(event) => {
         if (event.target.value === '__new__') onCreateStart()
@@ -314,16 +323,11 @@ function EntryRow({
             ×
           </button>
         </form>
-      ) : distinct ? (
-        <>
-          <span className="swatch-hit" style={{ background: selected?.color ?? '#6d6d6d' }}>{categorySelect}</span>
-          <span className="desc">{title}</span>
-        </>
       ) : (
         categorySelect
       )}
       {entry.termTotal != null && entry.termIndex != null && <em className="term-note">{entry.termIndex}/{entry.termTotal}</em>}
-      {payable && <DueField value={entry.dueDay} onCommit={(dueDay) => onChange({ dueDay })} />}
+      {dated && <DueField value={entry.dueDay} onCommit={(dueDay) => onChange({ dueDay })} />}
       <MoneyField autoFocus={autoFocus} value={entry.amount} onCommit={(amount) => onChange({ amount })} />
       <button className="del" aria-label={`Eliminar ${title || selected?.name || 'movimiento'}`} onClick={onDelete}>
         ×
