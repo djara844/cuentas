@@ -30,7 +30,7 @@ export function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
         <form className="auth-card" onSubmit={submit}>
           <p className="kicker">Acceso</p>
           <h1>Entra a la app</h1>
-          <p>Cuentas y pendientes quedan en este teléfono.</p>
+          <p>El libro se abre desde la base de datos en línea.</p>
           <label className="field">
             Usuario
             <input

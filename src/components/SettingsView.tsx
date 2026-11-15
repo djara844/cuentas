@@ -1,43 +1,21 @@
-import { useState, type FormEvent } from 'react'
+import { useState } from 'react'
 import { isDB } from '../types'
 import { go } from '../route'
 import { useStore } from '../store'
 import { TASK_COLORS, useBoard } from '../tasks'
-import type { SupabaseConfig } from '../remote'
+import { DebtsPanel } from './DebtsPanel'
+import { Fold } from './Fold'
 
 export function SettingsView({ scope }: { scope: 'general' | 'cuentas' | 'pendientes' }) {
   const store = useStore()
   const board = useBoard()
+  const today = new Date()
+  const cuentasPeriod =
+    store.db.periods.find((period) => period.year === today.getFullYear() && period.coveredMonth === today.getMonth()) ??
+    [...store.db.periods].sort((a, b) => b.sortOrder - a.sortOrder)[0]
   const [taskName, setTaskName] = useState('')
-  const [url, setUrl] = useState('')
-  const [key, setKey] = useState('')
   const [message, setMessage] = useState<string | null>(null)
-  const [pending, setPending] = useState(false)
-
-  async function connect(event: FormEvent) {
-    event.preventDefault()
-    setMessage(null)
-    const config: SupabaseConfig = { url: url.trim(), key: key.trim() }
-    if (!config.url.startsWith('https://') || !config.url.includes('supabase')) {
-      setMessage('La URL debe ser la de tu proyecto, por ejemplo https://xxxx.supabase.co')
-      return
-    }
-    if (config.key.length < 20) {
-      setMessage('Pega la anon public key completa.')
-      return
-    }
-    setPending(true)
-    try {
-      await store.connect(config)
-      setMessage('Conectado. Si pide cuenta, créala en la siguiente pantalla.')
-      setUrl('')
-      setKey('')
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : 'No se pudo conectar.')
-    } finally {
-      setPending(false)
-    }
-  }
+  const [debtsOpen, setDebtsOpen] = useState(false)
 
   function exportDB() {
     const blob = new Blob([JSON.stringify(store.db, null, 2)], { type: 'application/json' })
@@ -74,7 +52,7 @@ export function SettingsView({ scope }: { scope: 'general' | 'cuentas' | 'pendie
 
       {scope === 'cuentas' && (
         <>
-        <p className="formula">Un ítem es un ingreso o un gasto. Siempre lleva una categoría. En el mes se elige si es variable, fijo o periódico.</p>
+        <p className="formula">Un ítem es un ingreso o un gasto. Siempre lleva una categoría. En el mes se elige si es variable o fijo.</p>
         <nav className="config-links" aria-label="Cuentas">
           <button type="button" onClick={() => go('categorias')}>
             <span>Categorías</span>
@@ -84,7 +62,12 @@ export function SettingsView({ scope }: { scope: 'general' | 'cuentas' | 'pendie
             <span>Fijos</span>
             <small>Ítems que se copian en todos los meses, con su valor.</small>
           </button>
+          <button type="button" onClick={() => setDebtsOpen((open) => !open)}>
+            <span>Deudas</span>
+            <small>Cuotas que se pagan dentro de los gastos del mes.</small>
+          </button>
         </nav>
+        {debtsOpen && cuentasPeriod && <DebtsPanel period={cuentasPeriod} manage bare />}
         </>
       )}
 
@@ -93,46 +76,12 @@ export function SettingsView({ scope }: { scope: 'general' | 'cuentas' | 'pendie
       <section className="panel">
         <div className="panel-top">
           <h2>Base de datos</h2>
-          <span className={store.mode === 'local' ? 'pill' : 'pill on'}>
-            {store.mode === 'neon' ? 'Neon' : store.mode === 'supabase' ? 'Supabase' : 'Este navegador'}
-          </span>
+          <span className="pill on">{store.mode === 'supabase' ? 'Supabase' : 'Neon'}</span>
         </div>
-        {store.mode === 'neon' ? (
-          <p>Los cambios se guardan en Neon. También queda una copia en este navegador.</p>
-        ) : store.mode === 'local' ? (
+        {store.mode !== 'supabase' && <p>Los cambios se guardan en la base de datos en línea.</p>}
+        {store.mode === 'supabase' ? (
           <>
-            <p>
-              En este teléfono los datos ya se guardan solos. Para que también vivan en la nube, con la cuenta djaramillop7@gmail.com, conecta un proyecto gratis de{' '}
-              <a href="https://supabase.com" target="_blank" rel="noreferrer">
-                Supabase
-              </a>
-              .
-            </p>
-            <ol className="steps">
-              <li>Crea un proyecto en Supabase.</li>
-              <li>En SQL Editor pega y ejecuta el archivo <code>supabase/schema.sql</code> de este proyecto.</li>
-              <li>En Authentication desactiva “Confirm email”.</li>
-              <li>En Settings → API copia la Project URL y la anon key aquí.</li>
-            </ol>
-            <form className="stack" onSubmit={connect}>
-              <label className="field">
-                Project URL
-                <input value={url} placeholder="https://xxxx.supabase.co" onChange={(event) => setUrl(event.target.value)} autoComplete="off" />
-              </label>
-              <label className="field">
-                Anon public key
-                <input value={key} placeholder="eyJhbGciOi..." onChange={(event) => setKey(event.target.value)} autoComplete="off" />
-              </label>
-              <button className="btn primary" disabled={pending} type="submit">
-                {pending ? 'Conectando…' : 'Conectar Supabase'}
-              </button>
-            </form>
-          </>
-        ) : (
-          <>
-            <p>
-              Los cambios se guardan en Supabase{store.email ? ` con ${store.email}` : ''}. También queda una copia en este navegador.
-            </p>
+            <p>Los cambios se guardan en la base de datos en línea{store.email ? ` con ${store.email}` : ''}.</p>
             <div className="head-actions">
               {store.email && (
                 <button className="btn" onClick={() => store.signOut()}>
@@ -144,7 +93,7 @@ export function SettingsView({ scope }: { scope: 'general' | 'cuentas' | 'pendie
               </button>
             </div>
           </>
-        )}
+        ) : null}
       </section>
 
       <section className="panel">
@@ -177,6 +126,7 @@ export function SettingsView({ scope }: { scope: 'general' | 'cuentas' | 'pendie
       {scope === 'pendientes' && (
       <section className="config-module" aria-label="Pendientes">
         <h2>Pendientes</h2>
+        <Fold title="Categorías" meta={board.categories.length}>
         <p className="hint">Categorías en el orden del tablero.</p>
         <ol className="order-list">
           {board.categories.map((category, index) => (
@@ -201,6 +151,7 @@ export function SettingsView({ scope }: { scope: 'general' | 'cuentas' | 'pendie
             </li>
           ))}
         </ol>
+        </Fold>
         <form
           className="order-add"
           onSubmit={(event) => {

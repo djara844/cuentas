@@ -39,6 +39,18 @@ export interface Entry {
   termId: string | null
   termTotal: number | null
   termIndex: number | null
+  debtId: string | null
+  advance: boolean
+}
+
+export interface Debt {
+  id: string
+  name: string
+  total: number
+  cuota: number
+  categoryId: string | null
+  startYear: number
+  startMonth: number
 }
 
 export interface DB {
@@ -46,6 +58,7 @@ export interface DB {
   periods: Period[]
   entries: Entry[]
   templates: Template[]
+  debts: Debt[]
 }
 
 export interface Stats {
@@ -132,7 +145,30 @@ export function instantiateTemplates(periodId: string, templates: Template[]): E
     termId: null,
     termTotal: null,
     termIndex: null,
+    debtId: null,
+    advance: false,
   }))
+}
+
+export function planDebt(total: number, cuota: number): number[] {
+  const amounts: number[] = []
+  let left = Math.round(total)
+  const step = Math.round(cuota)
+  if (step <= 0 || left <= 0) return []
+  while (left > 0 && amounts.length < 36) {
+    const pay = Math.min(step, left)
+    amounts.push(pay)
+    left -= pay
+  }
+  return amounts
+}
+
+export function debtApplied(db: DB, debtId: string) {
+  const linked = db.entries.filter((entry) => entry.debtId === debtId)
+  const cuotas = linked.filter((entry) => !entry.advance)
+  const avances = linked.filter((entry) => entry.advance)
+  const paid = cuotas.filter((entry) => entry.paid).reduce((sum, entry) => sum + entry.amount, 0) + avances.filter((entry) => entry.paid).reduce((sum, entry) => sum + entry.amount, 0)
+  return { cuotas, avances, paid }
 }
 
 export function isDB(value: unknown): value is DB {

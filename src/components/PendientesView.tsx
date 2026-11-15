@@ -8,6 +8,7 @@ export function PendientesView() {
   const [filterId, setFilterId] = useState<string | null>(null)
   const [activeColumn, setActiveColumn] = useState(board.columns[0]?.id ?? '')
   const [draft, setDraft] = useState<Draft | null>(null)
+  const [openCols, setOpenCols] = useState<Record<string, boolean>>({})
 
   const filter = board.categories.find((category) => category.id === filterId) ?? null
   const visible = useMemo(
@@ -78,10 +79,6 @@ export function PendientesView() {
     showColumn(draft.columnId)
   }
 
-  const status = filter
-    ? `${filter.name} · ${visible.length} ${visible.length === 1 ? 'tarea' : 'tareas'}`
-    : `${board.cards.length} ${board.cards.length === 1 ? 'tarea' : 'tareas'} en el tablero`
-
   return (
     <>
       <header className="topbar">
@@ -126,11 +123,6 @@ export function PendientesView() {
           )
         })}
       </div>
-      <p className="filter-status" aria-live="polite">
-        {status}
-        {filter ? ' · toca otra vez para ver todas' : ''}
-      </p>
-
       <div className="icon-grid" aria-label="Listas">
         {board.columns.map((column) => {
           const count = visible.filter((card) => card.columnId === column.id).length
@@ -153,13 +145,22 @@ export function PendientesView() {
         {board.columns.map((column, index) => {
           const cards = visible.filter((card) => card.columnId === column.id)
           const dim = Boolean(filter) && cards.length === 0
+          const open = Boolean(openCols[column.id])
           return (
             <section key={column.id} id={`col-${column.id}`} className={dim ? 't-col dim' : 't-col'} aria-label={column.name}>
               <header className="t-col-head">
-                <h2 className="t-col-name">{column.name}</h2>
-                <span className="count">{cards.length}</span>
+                <button
+                  type="button"
+                  className="ledger-toggle"
+                  aria-expanded={open}
+                  onClick={() => setOpenCols((current) => ({ ...current, [column.id]: !open }))}
+                >
+                  <i className={open ? 'chev' : 'chev shut'} aria-hidden="true" />
+                  <h2 className="t-col-name">{column.name}</h2>
+                  <span className="count">{cards.length}</span>
+                </button>
               </header>
-              <div className="t-col-cards">
+              {open && <div className="t-col-cards">
                 {cards.length === 0 && (
                   <p className="empty">{filter ? `Nada de ${filter.name} aquí.` : 'Sin tareas. Agrega la primera.'}</p>
                 )}
@@ -170,7 +171,10 @@ export function PendientesView() {
                   return (
                     <article key={card.id} className="t-card" style={{ ['--card-color' as string]: category?.color ?? '#4c8dff' }}>
                       <button className="t-card-body" onClick={() => openEdit(card)}>
-                        <strong>{card.title}</strong>
+                        <span className="t-card-line">
+                          <strong>{card.title}</strong>
+                          <span className="item-edit">Editar</span>
+                        </span>
                         {card.detail && <p>{card.detail}</p>}
                         {card.due && <time dateTime={card.due}>{formatDay(card.due)}</time>}
                         <span className="task-cat" style={{ color: category?.color ?? 'var(--muted)' }}>
@@ -189,10 +193,12 @@ export function PendientesView() {
                     </article>
                   )
                 })}
-              </div>
-              <button className="btn primary t-add" onClick={() => openCreate(column.id)}>
-                + Tarea en {column.name}
-              </button>
+              </div>}
+              {open && (
+                <button className="btn primary t-add" onClick={() => openCreate(column.id)}>
+                  + Tarea en {column.name}
+                </button>
+              )}
             </section>
           )
         })}

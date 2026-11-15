@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { go } from '../route'
-import { NOTES, confirmGate, loadExtra, noteReport, saveExtra, type Note } from '../vault'
+import { NOTES, confirmGate, loadExtra, loadOverrides, noteReport, saveExtra, saveOverride, type Note } from '../vault'
+import { Fold } from './Fold'
 
 export function VaultView() {
   const [open, setOpen] = useState(false)
@@ -61,8 +62,17 @@ export function VaultView() {
 
 function Record() {
   const [extra, setExtra] = useState<Note[]>(loadExtra)
+  const [overrides, setOverrides] = useState<Record<string, Note>>(loadOverrides)
   const [adding, setAdding] = useState(false)
-  const notes = useMemo(() => [...NOTES, ...extra], [extra])
+  const [editing, setEditing] = useState<{ key: string; extraIndex: number | null; note: Note } | null>(null)
+  const rows = useMemo(
+    () => [
+      ...NOTES.map((note, index) => ({ key: `base:${index}`, extraIndex: null as number | null, note: overrides[`base:${index}`] ?? note })),
+      ...extra.map((note, index) => ({ key: `extra:${index}`, extraIndex: index, note })),
+    ],
+    [extra, overrides],
+  )
+  const notes = useMemo(() => rows.map((row) => row.note), [rows])
   const report = useMemo(() => noteReport(notes), [notes])
   const [openYear, setOpenYear] = useState<number | null>(null)
   const maxYear = Math.max(1, ...report.years.map((year) => year.count))
@@ -105,10 +115,7 @@ function Record() {
 
       {adding && <AddWoman onAdd={addWoman} />}
 
-      <section className="panel">
-        <div className="panel-top">
-          <h2>Por año</h2>
-        </div>
+      <Fold title="Por año" meta={report.years.length}>
         <ul className="bars">
           {report.years.map((year) => (
             <li key={year.year}>
@@ -125,7 +132,7 @@ function Record() {
             </li>
           ))}
         </ul>
-      </section>
+      </Fold>
 
       <div className="year-boxes">
         {report.years.map((year) => {
@@ -147,10 +154,30 @@ function Record() {
       </div>
       {openYear != null && (
         <div className="ledgers">
-          {notes.filter((item) => item.year === openYear).map((person, index) => (
-            <Person key={`${person.year}-${person.name}-${index}`} person={person} />
-          ))}
+          {rows
+            .filter((row) => row.note.year === openYear)
+            .map((row) => (
+              <Person key={row.key} person={row.note} onEdit={() => setEditing(row)} />
+            ))}
         </div>
+      )}
+      {editing && (
+        <EditNote
+          note={editing.note}
+          onClose={() => setEditing(null)}
+          onSave={(next) => {
+            if (editing.extraIndex != null) {
+              const copy = extra.map((item, index) => (index === editing.extraIndex ? next : item))
+              setExtra(copy)
+              saveExtra(copy)
+            } else {
+              saveOverride(editing.key, next)
+              setOverrides(loadOverrides())
+            }
+            setEditing(null)
+            setOpenYear(next.year)
+          }}
+        />
       )}
     </div>
       </main>
@@ -216,7 +243,7 @@ function AddWoman({ onAdd }: { onAdd: (note: Note) => void }) {
   )
 }
 
-function Person({ person }: { person: Note }) {
+function Person({ person, onEdit }: { person: Note; onEdit: () => void }) {
   return (
     <article className="person">
       <div>
@@ -224,6 +251,69 @@ function Person({ person }: { person: Note }) {
         <em>{person.age}</em>
       </div>
       {person.count != null ? <span>{person.count}</span> : <b>Recurrente</b>}
+      <button type="button" className="item-edit" onClick={onEdit}>
+        Editar
+      </button>
     </article>
+  )
+}
+
+function EditNote({ note, onClose, onSave }: { note: Note; onClose: () => void; onSave: (note: Note) => void }) {
+  const [name, setName] = useState(note.name)
+  const [year, setYear] = useState(note.year)
+  const [recurrent, setRecurrent] = useState(note.mark || note.count == null)
+  const [times, setTimes] = useState(note.count ?? 1)
+  const age = year - 1990
+
+  return (
+    <div className="sheet-back" onClick={onClose}>
+      <form
+        className="sheet"
+        role="dialog"
+        aria-label="Editar registro"
+        onClick={(event) => event.stopPropagation()}
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (!name.trim() || !Number.isFinite(year)) return
+          onSave({
+            name: name.trim(),
+            year,
+            age,
+            count: recurrent ? null : Math.max(1, times),
+            mark: recurrent,
+          })
+        }}
+      >
+        <div className="sheet-handle" />
+        <div className="sheet-title">
+          <h2>Editar</h2>
+          <button type="button" className="icon-btn" aria-label="Cerrar" onClick={onClose}>
+            ×
+          </button>
+        </div>
+        <label className="field">
+          Nombre
+          <input autoFocus value={name} onChange={(event) => setName(event.target.value)} />
+        </label>
+        <label className="field">
+          Año
+          <input type="number" inputMode="numeric" value={year} onChange={(event) => setYear(Number(event.target.value))} />
+        </label>
+        <div className="quiet-switch">
+          <button type="button" className={recurrent ? 'on' : ''} onClick={() => setRecurrent(true)}>
+            Recurrente
+          </button>
+          <button type="button" className={recurrent ? '' : 'on'} onClick={() => setRecurrent(false)}>
+            Veces
+          </button>
+          {!recurrent && (
+            <input type="number" inputMode="numeric" min={1} aria-label="Veces" value={times} onChange={(event) => setTimes(Math.max(1, Number(event.target.value) || 1))} />
+          )}
+        </div>
+        <button className="btn primary" type="submit" disabled={!name.trim()}>
+          Guardar
+        </button>
+      </form>
+    </div>
   )
 }

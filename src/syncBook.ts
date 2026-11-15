@@ -11,6 +11,7 @@ export interface SyncMeta {
     periods: string[]
     entries: string[]
     templates: string[]
+    debts: string[]
   }
 }
 
@@ -18,7 +19,7 @@ const empty = (): SyncMeta => ({
   revision: null,
   dirty: false,
   provisional: false,
-  deleted: { categories: [], periods: [], entries: [], templates: [] },
+  deleted: { categories: [], periods: [], entries: [], templates: [], debts: [] },
 })
 
 export function loadMeta(): SyncMeta {
@@ -35,6 +36,7 @@ export function loadMeta(): SyncMeta {
         periods: Array.isArray(parsed.deleted?.periods) ? parsed.deleted.periods : [],
         entries: Array.isArray(parsed.deleted?.entries) ? parsed.deleted.entries : [],
         templates: Array.isArray(parsed.deleted?.templates) ? parsed.deleted.templates : [],
+        debts: Array.isArray(parsed.deleted?.debts) ? parsed.deleted.debts : [],
       },
     }
   } catch {
@@ -72,7 +74,13 @@ function mergeList<T extends { id: string }>(local: T[], remote: T[], deleted: s
   const drop = new Set(deleted)
   const map = new Map<string, T>()
   for (const item of remote) if (!drop.has(item.id)) map.set(item.id, item)
-  for (const item of local) if (!drop.has(item.id)) map.set(item.id, item)
+  for (const item of local) {
+    if (drop.has(item.id)) continue
+    const prev = map.get(item.id) as ({ paid?: boolean } & T) | undefined
+    const next = item as { paid?: boolean } & T
+    if (prev && (prev.paid || next.paid)) map.set(item.id, { ...next, paid: true })
+    else map.set(item.id, item)
+  }
   return [...map.values()]
 }
 
@@ -82,5 +90,6 @@ export function mergeBooks(local: DB, remote: DB, meta: SyncMeta): DB {
     periods: mergeList(local.periods, remote.periods, meta.deleted.periods),
     templates: mergeList(local.templates, remote.templates, meta.deleted.templates),
     entries: mergeList(local.entries, remote.entries, meta.deleted.entries),
+    debts: mergeList(local.debts ?? [], remote.debts ?? [], meta.deleted.debts ?? []),
   }
 }

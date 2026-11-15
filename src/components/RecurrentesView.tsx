@@ -3,18 +3,15 @@ import type { Kind } from '../types'
 import { KINDS, categoriesOf, templatesOf } from '../types'
 import { useStore } from '../store'
 import { MoneyField } from './Fields'
-import { SWATCHES } from './Ledger'
 
 export function RecurrentesView() {
-  const store = useStore()
-
   return (
     <div className="wrap">
       <header className="page-head">
         <div>
           <p className="kicker">Cuentas</p>
           <h1 className="page-title">Fijos</h1>
-          <p className="formula">Estos ítems entran en todos los meses. En el mes también puedes dejar uno variable o periódico.</p>
+          <p className="formula">Estos ítems entran en todos los meses.</p>
         </div>
       </header>
       <div className="cat-board">
@@ -22,7 +19,6 @@ export function RecurrentesView() {
           <TemplateColumn key={`${kind.id}-cerrado`} kind={kind.id} label={kind.label} />
         ))}
       </div>
-      <p className="hint alone">{store.db.templates.filter((item) => item.kind !== 'servicio').length} fijos, presentes en todos los periodos.</p>
     </div>
   )
 }
@@ -52,14 +48,12 @@ function TemplateColumn({ kind, label }: { kind: Kind; label: string }) {
       </header>
       {open && (
         <ul className="cat-list">
-          {templates.map((template, index) => {
+          {templates.map((template) => {
             const category = categories.find((item) => item.id === template.categoryId)
-            const color = category?.color ?? SWATCHES[index % SWATCHES.length]
             const itemName = template.description
             return (
               <li key={template.id} className="recur-item">
                 <div className="recur-name">
-                  <i style={{ background: color }} />
                   <input
                     value={itemName}
                     placeholder="Ítem"

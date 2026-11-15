@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { MONTHS, periodStats, type Kind } from '../types'
 import { formatCOP } from '../money'
 import { useStore } from '../store'
+import { Fold } from './Fold'
 
 export function ReportsView({ year }: { year: number }) {
   const store = useStore()
@@ -88,10 +89,7 @@ export function ReportsView({ year }: { year: number }) {
 
       <Rank title="Gastos por categoría" items={report.gastos} total={report.totals.gastos} />
 
-      <section className="panel">
-        <div className="panel-top">
-          <h2>Gastos por mes</h2>
-        </div>
+      <Fold title="Gastos por mes" meta={formatCOP(report.totals.gastos)}>
         <ul className="bars">
           {report.rows.map((row) => (
             <li key={row.period.id}>
@@ -110,7 +108,7 @@ export function ReportsView({ year }: { year: number }) {
             </li>
           ))}
         </ul>
-      </section>
+      </Fold>
 
       <article className={report.totals.libre < 0 ? 'hero neg' : 'hero'}>
         <p>Libre del año</p>
@@ -133,10 +131,7 @@ export function ReportsView({ year }: { year: number }) {
         </article>
       </section>
 
-      <section className="panel">
-        <div className="panel-top">
-          <h2>Libre por mes</h2>
-        </div>
+      <Fold title="Libre por mes" meta={formatCOP(report.totals.libre)}>
         <ul className="bars">
           {report.rows.map((row) => (
             <li key={row.period.id}>
@@ -153,7 +148,7 @@ export function ReportsView({ year }: { year: number }) {
             </li>
           ))}
         </ul>
-      </section>
+      </Fold>
 
       <Rank title="De dónde entró" items={report.ingresos} total={report.totals.ingresos} />
 
@@ -181,10 +176,7 @@ function Rank({ title, items, total }: { title: string; items: { name: string; c
   const max = Math.max(1, ...items.map((item) => item.amount))
   if (items.length === 0) return null
   return (
-    <section className="panel">
-      <div className="panel-top">
-        <h2>{title}</h2>
-      </div>
+    <Fold title={title} meta={`${items.length}`}>
       <ul className="bars">
         {items.map((item) => (
           <li key={item.name}>
@@ -204,6 +196,6 @@ function Rank({ title, items, total }: { title: string; items: { name: string; c
           </li>
         ))}
       </ul>
-    </section>
+    </Fold>
   )
 }

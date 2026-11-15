@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react'
-import { go, goPeriod } from '../route'
-import { useBoard } from '../tasks'
+import { go } from '../route'
+import { useBoard, type TaskCard } from '../tasks'
 import { useStore } from '../store'
-import { MONTHS } from '../types'
+import { MONTHS, categoriesOf } from '../types'
 import { formatCOP } from '../money'
 import { colombianHolidays } from '../colombia'
+import { EntryEditor } from './Ledger'
+import { Fold } from './Fold'
 
 const FESTIVO = '#e7c27a'
 
@@ -16,6 +18,8 @@ export function CalendarView() {
   const store = useStore()
   const [cursor, setCursor] = useState({ year: today.getFullYear(), month: today.getMonth() })
   const [selected, setSelected] = useState<string | null>(iso(today))
+  const [editingPay, setEditingPay] = useState<string | null>(null)
+  const [editingCard, setEditingCard] = useState<TaskCard | null>(null)
 
   const dated = useMemo(
     () => board.cards.filter((card) => card.due && card.due.startsWith(`${cursor.year}-${String(cursor.month + 1).padStart(2, '0')}`)),
@@ -66,9 +70,6 @@ export function CalendarView() {
         </button>
         <div className="brand">
           <span>Calendario</span>
-          <small>
-            {payments.length} pagos · {dated.length} pendientes
-          </small>
         </div>
       </header>
       <main className="main">
@@ -118,44 +119,198 @@ export function CalendarView() {
           })}
         </div>
 
-        <section className="day-list">
-          <h2>{selected ? `Pagos del ${labelDay(selected)}` : 'Pagos del mes'}</h2>
+        <div className="day-list">
+          <Fold title={selected ? `Pagos del ${labelDay(selected)}` : 'Pagos del mes'} meta={(selected ? payments.filter((item) => iso(new Date(cursor.year, cursor.month, item.day)) === selected) : payments).length}>
           {(selected ? payments.filter((item) => iso(new Date(cursor.year, cursor.month, item.day)) === selected) : payments).length === 0 && (
             <p className="empty wide">No hay pagos con fecha{selected ? ' este día' : ' este mes'}.</p>
           )}
           {(selected ? payments.filter((item) => iso(new Date(cursor.year, cursor.month, item.day)) === selected) : payments).map((item) => (
-            <article key={item.entry.id} className={item.entry.paid ? 'is-paid' : ''} style={{ ['--card-color' as string]: item.color }}>
-              <button type="button" onClick={() => goPeriod(item.entry.periodId)}>
+            <article key={item.entry.id} className={item.entry.paid ? 'item is-paid' : 'item'}>
+              <div className="item-copy">
                 <strong>{item.entry.description || 'Pago'}</strong>
                 <small>
+                  <i style={{ background: item.color }} />
                   Día {item.day}
-                  {item.entry.termTotal ? ` · ${item.entry.termIndex}/${item.entry.termTotal}` : ''}
-                  {' · '}
-                  {formatCOP(item.entry.amount)}
-                  {item.entry.paid ? ' · pagado' : ''}
+                  {item.entry.debtId ? ' · Deuda' : ''}
                 </small>
-              </button>
+              </div>
+              <b className="item-amount">{formatCOP(item.entry.amount)}</b>
+              <div className="item-actions">
+                <button
+                  type="button"
+                  className={item.entry.paid ? 'pay-chip on' : 'pay-chip'}
+                  aria-pressed={Boolean(item.entry.paid)}
+                  onClick={() => store.updateEntry(item.entry.id, { paid: !item.entry.paid })}
+                >
+                  {item.entry.paid ? 'Pagado' : 'Pagar'}
+                </button>
+                <button type="button" className="item-edit" onClick={() => setEditingPay(item.entry.id)}>
+                  Editar
+                </button>
+              </div>
             </article>
           ))}
-          <h2>{selected ? `Pendientes del ${labelDay(selected)}` : 'Pendientes del mes'}</h2>
+          </Fold>
+          <Fold title={selected ? `Pendientes del ${labelDay(selected)}` : 'Pendientes del mes'} meta={dayCards.length}>
           {dayCards.length === 0 && <p className="empty wide">No hay pendientes con fecha{selected ? ' este día' : ' este mes'}.</p>}
           {dayCards.map((card) => {
             const category = board.categories.find((item) => item.id === card.categoryId)
             const column = board.columns.find((item) => item.id === card.columnId)
             return (
-              <article key={card.id} style={{ ['--card-color' as string]: category?.color ?? '#f472b6' }}>
-                <strong>{card.title || 'Sin título'}</strong>
-                <small>
-                  {column?.name ?? 'Pendiente'}
-                  {category ? ` · ${category.name}` : ''}
-                  {card.due ? ` · ${labelDay(card.due)}` : ''}
-                </small>
+              <article key={card.id} className="item">
+                <div className="item-copy">
+                  <strong>{card.title || 'Sin título'}</strong>
+                  <small>
+                    <i style={{ background: category?.color ?? '#f472b6' }} />
+                    {column?.name ?? 'Pendiente'}
+                    {category ? ` · ${category.name}` : ''}
+                    {card.due ? ` · ${labelDay(card.due)}` : ''}
+                  </small>
+                </div>
+                <button type="button" className="item-edit" onClick={() => setEditingCard(card)}>
+                  Editar
+                </button>
               </article>
             )
           })}
-        </section>
+          </Fold>
+        </div>
+        {editingPay && <PayEditor id={editingPay} onClose={() => setEditingPay(null)} />}
+        {editingCard && (
+          <CardEditor
+            card={editingCard}
+            onClose={() => setEditingCard(null)}
+            onSave={(next) => {
+              board.updateCard(editingCard.id, next)
+              setEditingCard(null)
+            }}
+            onDelete={() => {
+              board.removeCard(editingCard.id)
+              setEditingCard(null)
+            }}
+          />
+        )}
       </main>
     </>
+  )
+}
+
+function PayEditor({ id, onClose }: { id: string; onClose: () => void }) {
+  const store = useStore()
+  const entry = store.db.entries.find((item) => item.id === id)
+  if (!entry) return null
+  return (
+    <EntryEditor
+      entry={entry}
+      categories={categoriesOf(store.db, entry.kind)}
+      payable={entry.kind !== 'ingreso'}
+      dated={entry.kind !== 'ingreso'}
+      onCreateCategory={(name) => store.addCategory({ name, kind: entry.kind, color: '#fbbf24' })}
+      onClose={onClose}
+      onDelete={() => {
+        store.removeEntry(entry.id)
+        onClose()
+      }}
+      onSave={(patch) => {
+        if (entry.templateId && (patch.description !== undefined || patch.categoryId !== undefined)) {
+          store.updateTemplate(entry.templateId, {
+            ...(patch.description !== undefined ? { description: patch.description } : {}),
+            ...(patch.categoryId !== undefined ? { categoryId: patch.categoryId } : {}),
+          })
+        }
+        store.updateEntry(entry.id, patch)
+        onClose()
+      }}
+    />
+  )
+}
+
+function CardEditor({
+  card,
+  onClose,
+  onSave,
+  onDelete,
+}: {
+  card: TaskCard
+  onClose: () => void
+  onSave: (next: Partial<Pick<TaskCard, 'title' | 'detail' | 'due' | 'categoryId' | 'columnId'>>) => void
+  onDelete: () => void
+}) {
+  const board = useBoard()
+  const [title, setTitle] = useState(card.title)
+  const [detail, setDetail] = useState(card.detail)
+  const [due, setDue] = useState(card.due ?? '')
+  const [categoryId, setCategoryId] = useState(card.categoryId ?? '')
+  const [columnId, setColumnId] = useState(card.columnId)
+  return (
+    <div className="sheet-back" onClick={onClose}>
+      <form
+        className="sheet"
+        role="dialog"
+        aria-label="Editar pendiente"
+        onClick={(event) => event.stopPropagation()}
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (!title.trim()) return
+          onSave({ title: title.trim(), detail: detail.trim(), due: due || null, categoryId: categoryId || null, columnId })
+        }}
+      >
+        <div className="sheet-handle" />
+        <div className="sheet-title">
+          <h2>Editar</h2>
+          <button type="button" className="icon-btn" aria-label="Cerrar" onClick={onClose}>
+            ×
+          </button>
+        </div>
+        <label className="field">
+          Título
+          <input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} />
+        </label>
+        <label className="field">
+          Detalle
+          <textarea rows={3} value={detail} onChange={(event) => setDetail(event.target.value)} />
+        </label>
+        <label className="field">
+          Fecha
+          <input type="date" value={due} onChange={(event) => setDue(event.target.value)} />
+        </label>
+        <label className="field">
+          Categoría
+          <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
+            <option value="">Sin categoría</option>
+            {board.categories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          Lista
+          <select value={columnId} onChange={(event) => setColumnId(event.target.value)}>
+            {board.columns.map((column) => (
+              <option key={column.id} value={column.id}>
+                {column.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="modal-actions">
+          <button
+            type="button"
+            className="btn danger"
+            onClick={() => {
+              if (confirm('¿Eliminar esta tarea?')) onDelete()
+            }}
+          >
+            Eliminar
+          </button>
+          <button className="btn primary" type="submit" disabled={!title.trim()}>
+            Guardar
+          </button>
+        </div>
+      </form>
+    </div>
   )
 }
 

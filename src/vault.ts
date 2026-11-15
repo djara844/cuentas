@@ -48,6 +48,7 @@ export const NOTES: Note[] = [
 ]
 
 const EXTRA_KEY = 'cuentas-registro-extra-v1'
+const OVERRIDE_KEY = 'cuentas-registro-overrides-v1'
 const GATE_HASH = '679fea7a7ddf4783cf51a722e5eaca24976bedb02fdf9dc38dee065e2bdfec3a'
 
 export function loadExtra(): Note[] {
@@ -64,6 +65,23 @@ export function loadExtra(): Note[] {
 
 export function saveExtra(notes: Note[]) {
   localStorage.setItem(EXTRA_KEY, JSON.stringify(notes))
+}
+
+export function loadOverrides(): Record<string, Note> {
+  try {
+    const raw = localStorage.getItem(OVERRIDE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, Note>
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+export function saveOverride(key: string, note: Note) {
+  const current = loadOverrides()
+  current[key] = note
+  localStorage.setItem(OVERRIDE_KEY, JSON.stringify(current))
 }
 
 export async function confirmGate(password: string): Promise<boolean> {

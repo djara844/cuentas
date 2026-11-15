@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { StoreProvider, useStore } from './store'
 import { go, goPeriod, goSettings, readRoute, type Route } from './route'
-import { periodStats } from './types'
+import { debtApplied, periodStats } from './types'
 import { formatCOP } from './money'
 import { PeriodView } from './components/PeriodView'
 import { YearView } from './components/YearView'
@@ -44,6 +44,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     return list
   }, [store.db.periods, year])
 
+  const debtToDate = (store.db.debts ?? []).reduce((sum, debt) => sum + Math.max(0, debt.total - debtApplied(store.db, debt.id).paid), 0)
   const periods = store.db.periods.filter((p) => p.year === year).sort((a, b) => a.sortOrder - b.sortOrder)
   const selected = store.db.periods.find((p) => p.id === route.periodId) ?? null
   const openedPeriod = useRef(false)
@@ -150,7 +151,11 @@ function Shell({ onLogout }: { onLogout: () => void }) {
   return (
     <div className="app">
       <header className="topbar">
-        <button className="icon-btn" aria-label="Inicio" onClick={() => go('inicio')}>
+        <button
+          className="icon-btn"
+          aria-label={route.view === 'periodo' || route.view === 'anio' || route.view === 'reportes' ? 'Inicio' : 'Mes'}
+          onClick={() => (route.view === 'periodo' || route.view === 'anio' || route.view === 'reportes' ? go('inicio') : openMes())}
+        >
           <Glyph>
             <path d="M4 11.5 12 4l8 7.5" />
             <path d="M7 10.5V20h10v-9.5" />
@@ -158,7 +163,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
         </button>
         <div className="brand">
           <span>Cuentas</span>
-          <small>{store.mode === 'local' ? 'En este teléfono' : 'En la nube'}</small>
+          <small>En la nube</small>
         </div>
         <label className="year-label">
           <span className="sr">Año</span>
@@ -187,7 +192,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
         <button
           className={route.view === 'ajustes' || route.view === 'categorias' || route.view === 'recurrentes' ? 'icon-btn on' : 'icon-btn'}
           aria-label="Configuración"
-          onClick={() => goSettings('cuentas')}
+          onClick={() => (route.view === 'ajustes' ? openMes() : goSettings('cuentas'))}
         >
           <Glyph>
             <circle cx="12" cy="12" r="3" />
@@ -195,6 +200,13 @@ function Shell({ onLogout }: { onLogout: () => void }) {
           </Glyph>
         </button>
       </header>
+
+      {route.view === 'periodo' && debtToDate > 0 && (
+        <p className="debt-asof">
+          <span>Deudas a la fecha</span>
+          <b>{formatCOP(debtToDate)}</b>
+        </p>
+      )}
 
       {route.view === 'periodo' && (
         <div className="chips" aria-label="Meses">

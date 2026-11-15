@@ -138,7 +138,10 @@ export async function fetchDB(sb: SupabaseClient, userId: string): Promise<DB> {
       termId: (row.term_id as string | null) ?? null,
       termTotal: row.term_total == null ? null : Number(row.term_total),
       termIndex: row.term_index == null ? null : Number(row.term_index),
+      debtId: null,
+      advance: false,
     })),
+    debts: [],
   }
 }
 

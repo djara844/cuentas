@@ -87,7 +87,6 @@ type TemplateKey =
   | 'intereses'
   | 'arriendo'
   | 'diario'
-  | 'cuota'
   | 'banco'
   | 'luz'
   | 'gas'
@@ -102,8 +101,7 @@ const templateDefs: Array<{ key: TemplateKey; kind: Kind; cat: CatKey; descripti
   { key: 'intereses', kind: 'ingreso', cat: 'intereses', description: 'Intereses bancarios', amount: 0, sortOrder: 3 },
   { key: 'arriendo', kind: 'gasto', cat: 'arriendo', description: 'Arriendo', amount: 600000, sortOrder: 0 },
   { key: 'diario', kind: 'gasto', cat: 'libros', description: 'Diario', amount: 1280000, sortOrder: 1 },
-  { key: 'cuota', kind: 'gasto', cat: 'tonello', description: 'Cuota Tonello', amount: 1700000, sortOrder: 2 },
-  { key: 'banco', kind: 'gasto', cat: 'banco', description: 'Bancolombia cuota de manejo', amount: 80000, sortOrder: 3 },
+  { key: 'banco', kind: 'gasto', cat: 'banco', description: 'Bancolombia cuota de manejo', amount: 80000, sortOrder: 2 },
   { key: 'luz', kind: 'servicio', cat: 'luz', description: 'Luz', amount: 0, sortOrder: 0 },
   { key: 'gas', kind: 'servicio', cat: 'gas', description: 'Gas', amount: 0, sortOrder: 1 },
   { key: 'agua', kind: 'servicio', cat: 'agua', description: 'Agua', amount: 0, sortOrder: 2 },
@@ -117,7 +115,6 @@ const overrides: Partial<Record<TemplateKey, Partial<Record<number, number>>>> =
   prima: { 0: 1800000, 6: 1050000 },
   arriendo: { 2: 489030, 3: 489030, 4: 500030, 6: 800000 },
   diario: { 3: 1030030, 4: 1000030, 5: 1030030, 6: 1200000, 7: 1500000, 8: 1500000, 11: 1500000 },
-  cuota: { 1: 0, 2: 1480030, 3: 1030030, 4: 1300030 },
   banco: { 2: 80030, 3: 80030, 5: 180030 },
   luz: { 1: 21170, 2: 24030, 3: 20220, 4: 20750 },
   gas: { 1: 8180, 2: 8780, 3: 8180, 4: 8180 },
@@ -241,6 +238,8 @@ export function buildSeed(year = 2026): DB {
         termId: null,
         termTotal: null,
         termIndex: null,
+        debtId: null,
+        advance: false,
       })
     }
 
@@ -259,6 +258,8 @@ export function buildSeed(year = 2026): DB {
         termId: null,
         termTotal: null,
         termIndex: null,
+        debtId: null,
+        advance: false,
       })
     })
   }
@@ -268,5 +269,6 @@ export function buildSeed(year = 2026): DB {
     periods,
     entries,
     templates,
+    debts: [],
   }
 }

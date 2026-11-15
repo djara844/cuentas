@@ -5,8 +5,6 @@ import { useStore } from '../store'
 import { SWATCHES } from './Ledger'
 
 export function CategoriesView() {
-  const store = useStore()
-
   return (
     <div className="wrap">
       <header className="page-head">
@@ -21,7 +19,6 @@ export function CategoriesView() {
           <CategoryColumn key={`${kind.id}-cerrado`} kind={kind.id} label={kind.label} />
         ))}
       </div>
-      <p className="hint alone">{store.db.categories.filter((item) => item.kind !== 'servicio').length} categorías en el libro.</p>
     </div>
   )
 }
@@ -53,7 +50,6 @@ function CategoryColumn({ kind, label }: { kind: Kind; label: string }) {
             const used = store.db.entries.filter((entry) => entry.categoryId === category.id).length
             return (
               <li key={category.id} className="cat-item">
-                <i style={{ background: category.color }} />
                 <input
                   value={category.name}
                   aria-label={`Nombre de ${category.name}`}
