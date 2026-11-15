@@ -65,7 +65,54 @@ function withoutReplacedCuota(db: DB): DB {
 }
 
 function prepareBook(db: DB): DB {
-  return withoutReplacedCuota(withoutDuplicateDebts(normalize(db)))
+  return balanceDebts(withoutReplacedCuota(withoutDuplicateDebts(normalize(db))))
+}
+
+function monthKey(periods: Period[], periodId: string) {
+  const period = periods.find((item) => item.id === periodId)
+  return period ? period.year * 100 + period.coveredMonth : 0
+}
+
+function balanceDebts(db: DB): DB {
+  let entries = db.entries
+  let changed = false
+  for (const debt of db.debts ?? []) {
+    const sum = entries.filter((entry) => entry.debtId === debt.id).reduce((total, entry) => total + entry.amount, 0)
+    const delta = sum - debt.total
+    if (!delta) continue
+    entries = shiftLastCuota(entries, db.periods, debt.id, delta)
+    changed = true
+  }
+  return changed ? { ...db, entries } : db
+}
+
+function shiftLastCuota(entries: Entry[], periods: Period[], debtId: string, delta: number, skipId?: string): Entry[] {
+  if (!delta) return entries
+  const cuotas = entries
+    .filter((entry) => entry.debtId === debtId && !entry.advance && entry.id !== skipId)
+    .sort((a, b) => monthKey(periods, a.periodId) - monthKey(periods, b.periodId))
+    .map((entry) => ({ ...entry }))
+  if (!cuotas.length) return entries
+  if (delta > 0) {
+    let left = delta
+    for (let index = cuotas.length - 1; index >= 0 && left > 0; index -= 1) {
+      if (cuotas[index].paid) continue
+      const cut = Math.min(cuotas[index].amount, left)
+      cuotas[index] = { ...cuotas[index], amount: cuotas[index].amount - cut }
+      left -= cut
+    }
+  } else {
+    const fromEnd = [...cuotas].reverse().findIndex((entry) => !entry.paid)
+    const target = fromEnd < 0 ? cuotas.length - 1 : cuotas.length - 1 - fromEnd
+    cuotas[target] = { ...cuotas[target], amount: cuotas[target].amount + -delta }
+  }
+  const removed = cuotas.filter((entry) => entry.amount <= 0).map((entry) => entry.id)
+  if (removed.length) noteDeleted('entries', removed)
+  const kept = cuotas
+    .filter((entry) => entry.amount > 0)
+    .map((entry, index, list) => ({ ...entry, termIndex: index + 1, termTotal: list.length }))
+  const ids = new Set(cuotas.map((entry) => entry.id))
+  return [...entries.filter((entry) => !ids.has(entry.id)), ...kept]
 }
 
 function withoutDuplicateDebts(db: DB): DB {
@@ -191,7 +238,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }
 
   function commit(recipe: (current: DB) => DB) {
-    const next = recipe(dbRef.current)
+    const next = balanceDebts(recipe(dbRef.current))
     dbRef.current = next
     setDb(next)
     saveLocal(next)
@@ -562,7 +609,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const debt = (dbRef.current.debts ?? []).find((item) => item.id === debtId)
         const value = Math.max(0, Math.round(amount))
         if (!debt || value <= 0) return
-        const removed: string[] = []
         commit((current) => {
           const advance: Entry = {
             id: uid(),
@@ -581,38 +627,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             debtId: debt.id,
             advance: true,
           }
-          if (!paid) return { ...current, entries: [...current.entries, advance] }
-          const cuotas = current.entries
-            .filter((entry) => entry.debtId === debtId && !entry.advance)
-            .sort((a, b) => (a.termIndex ?? 0) - (b.termIndex ?? 0))
-            .map((entry) => ({ ...entry }))
-          let left = value
-          for (let index = cuotas.length - 1; index >= 0 && left > 0; index -= 1) {
-            if (cuotas[index].paid) continue
-            const cut = Math.min(cuotas[index].amount, left)
-            cuotas[index] = { ...cuotas[index], amount: cuotas[index].amount - cut }
-            left -= cut
-          }
-          const drop = cuotas.filter((entry) => entry.amount <= 0).map((entry) => entry.id)
-          removed.push(...drop)
-          const kept = cuotas
-            .filter((entry) => entry.amount > 0)
-            .map((entry, index, list) => ({ ...entry, termIndex: index + 1, termTotal: list.length, termId: debt.id }))
-          if (drop.length) noteDeleted('entries', drop)
-          const oldIds = new Set(cuotas.map((entry) => entry.id))
-          return {
-            ...current,
-            entries: [...current.entries.filter((entry) => !oldIds.has(entry.id)), ...kept, advance],
-          }
+          return { ...current, entries: shiftLastCuota([...current.entries, advance], current.periods, debt.id, value) }
         })
       },
       updateEntry: (id, patch) => {
         const currentEntry = dbRef.current.entries.find((entry) => entry.id === id)
         let updated: Entry | undefined
-        const removed: string[] = []
         commit((current) => {
-          const advancePaid = Boolean(currentEntry?.advance && currentEntry.debtId && patch.paid === true && !currentEntry.paid)
-          const advanceUnpaid = Boolean(currentEntry?.advance && currentEntry.debtId && patch.paid === false && currentEntry.paid)
           let entries = current.entries.map((e) => {
             if (e.id === id) {
               updated = { ...e, ...patch }
@@ -623,33 +644,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             }
             return e
           })
-          if (advancePaid && currentEntry) {
-            const cuotas = entries
-              .filter((entry) => entry.debtId === currentEntry.debtId && !entry.advance)
-              .sort((a, b) => (a.termIndex ?? 0) - (b.termIndex ?? 0))
-              .map((entry) => ({ ...entry }))
-            let left = currentEntry.amount
-            for (let index = cuotas.length - 1; index >= 0 && left > 0; index -= 1) {
-              if (cuotas[index].paid) continue
-              const cut = Math.min(cuotas[index].amount, left)
-              cuotas[index] = { ...cuotas[index], amount: cuotas[index].amount - cut }
-              left -= cut
-            }
-            const drop = cuotas.filter((entry) => entry.amount <= 0).map((entry) => entry.id)
-            removed.push(...drop)
-            const kept = cuotas
-              .filter((entry) => entry.amount > 0)
-              .map((entry, index, list) => ({ ...entry, termIndex: index + 1, termTotal: list.length, termId: currentEntry.debtId }))
-            if (drop.length) noteDeleted('entries', drop)
-            const oldIds = new Set(cuotas.map((entry) => entry.id))
-            entries = [...entries.filter((entry) => !oldIds.has(entry.id)), ...kept]
-          }
-          if (advanceUnpaid && currentEntry) {
-            const cuotas = entries
-              .filter((entry) => entry.debtId === currentEntry.debtId && !entry.advance)
-              .sort((a, b) => (a.termIndex ?? 0) - (b.termIndex ?? 0))
-            const last = cuotas[cuotas.length - 1]
-            if (last) entries = entries.map((entry) => (entry.id === last.id ? { ...entry, amount: entry.amount + currentEntry.amount } : entry))
+          if (currentEntry?.debtId && patch.amount != null && Math.round(patch.amount) !== currentEntry.amount) {
+            entries = shiftLastCuota(entries, current.periods, currentEntry.debtId, Math.round(patch.amount) - currentEntry.amount, currentEntry.advance ? undefined : currentEntry.id)
           }
           return { ...current, entries }
         })
@@ -673,7 +669,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const index = cuotas.findIndex((entry) => entry.periodId === periodId)
           if (index < 0) return current
           const advances = current.entries
-            .filter((entry) => entry.debtId === debtId && entry.advance && entry.paid)
+            .filter((entry) => entry.debtId === debtId && entry.advance)
             .reduce((sum, entry) => sum + entry.amount, 0)
           const target = Math.max(0, debt.total - advances)
           const next = cuotas.map((entry) => ({ ...entry }))
@@ -750,12 +746,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         noteDeleted('entries', [id])
         commit((current) => {
           let entries = current.entries.filter((item) => item.id !== id)
-          if (entry?.advance && entry.paid && entry.debtId && entry.amount > 0) {
-            const cuotas = entries
-              .filter((item) => item.debtId === entry.debtId && !item.advance)
-              .sort((a, b) => (a.termIndex ?? 0) - (b.termIndex ?? 0))
-            const last = cuotas[cuotas.length - 1]
-            if (last) entries = entries.map((item) => (item.id === last.id ? { ...item, amount: item.amount + entry.amount } : item))
+          if (entry?.advance && entry.debtId && entry.amount > 0) {
+            entries = shiftLastCuota(entries, current.periods, entry.debtId, -entry.amount)
           }
           return { ...current, entries }
         })
