@@ -1,16 +1,16 @@
-import { useEffect } from 'react'
-import { MONTHS, periodStats } from '../types'
+import { MONTHS, periodHasArrived, periodIsListed, periodStats } from '../types'
 import { formatCOP } from '../money'
 import { useStore } from '../store'
 import { goPeriod } from '../route'
 export function YearView({ year, onYear }: { year: number; onYear: (year: number) => void }) {
   const store = useStore()
-  const periods = store.db.periods.filter((p) => p.year === year).sort((a, b) => a.sortOrder - b.sortOrder)
-  useEffect(() => {
-    if (periods.length < 12) store.ensureYear(year)
-  }, [periods.length, year, store])
-  const years = Array.from(new Set(store.db.periods.map((p) => p.year))).sort()
-  const totals = periods.reduce(
+  const today = new Date()
+  const periods = store.db.periods
+    .filter((period) => period.year === year && periodIsListed(store.db, period, today))
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+  const arrived = periods.filter((period) => periodHasArrived(period, today))
+  const years = Array.from(new Set(store.db.periods.filter((period) => periodIsListed(store.db, period, today)).map((period) => period.year))).sort((a, b) => a - b)
+  const totals = arrived.reduce(
     (acc, period) => {
       const stats = periodStats(store.db, period.id)
       acc.ingresos += stats.ingresos
@@ -27,6 +27,12 @@ export function YearView({ year, onYear }: { year: number; onYear: (year: number
         <div>
           <p className="kicker">Vista anual</p>
           <h1 className="page-title">{year}</h1>
+          {arrived.length < periods.length && (
+            <p className="formula">
+              {year === today.getFullYear() ? `Hasta ${MONTHS[today.getMonth()].toLowerCase()}. ` : ''}
+              Los meses que no han llegado no entran en el total.
+            </p>
+          )}
         </div>
         <div className="head-actions">
           <select className="year-select light" value={year} aria-label="Año" onChange={(event) => onYear(Number(event.target.value))}>

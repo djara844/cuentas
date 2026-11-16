@@ -96,7 +96,7 @@ export async function fetchDB(sb: SupabaseClient, userId: string): Promise<DB> {
   throwIf(entries.error)
   const templateRows = templates.error && /does not exist|schema cache/i.test(templates.error.message) ? [] : templates.data
   if (templates.error && templateRows !== templates.data) {
-    /* la tabla todavía no existe: el libro sigue en local hasta correr el SQL nuevo */
+    /* la tabla todavía no existe: los datos siguen en el teléfono hasta correr el SQL nuevo */
   } else {
     throwIf(templates.error)
   }

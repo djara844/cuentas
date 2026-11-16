@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { MONTHS, categoriesOf, debtApplied, planDebt, type Entry, type Period } from '../types'
+import { MONTHS, categoriesOf, debtApplied, planDebt, planSpan, type Entry, type Period } from '../types'
 import { formatCOP, parseCOP } from '../money'
 import { useStore } from '../store'
 import { Fold } from './Fold'
@@ -117,6 +117,7 @@ export function DebtsPanel({ period, manage = false, nested = false, bare = fals
                   startId={startPeriod?.id ?? period.id}
                   categories={categories}
                   initial={{ name: debt.name, total: debt.total, cuota: debt.cuota, categoryId: debt.categoryId }}
+                  initialMonths={debtMonths(debt, store.db.periods, store.db.entries)}
                   paidMonths={ordered
                     .filter((entry) => entry.paid)
                     .map((entry) => {
@@ -223,12 +224,26 @@ function PaymentForm({
   )
 }
 
+function debtMonths(debt: { id: string; months?: number | null; startYear: number; startMonth: number }, periods: Period[], entries: Entry[]) {
+  if (typeof debt.months === 'number' && debt.months > 0) return debt.months
+  const start = debt.startYear * 12 + debt.startMonth
+  let last = start
+  for (const entry of entries) {
+    if (entry.debtId !== debt.id || entry.advance) continue
+    const period = periods.find((item) => item.id === entry.periodId)
+    if (!period) continue
+    last = Math.max(last, period.year * 12 + period.coveredMonth)
+  }
+  return Math.max(1, last - start + 1)
+}
+
 function DebtForm({
   title,
   periods,
   startId,
   categories,
   initial,
+  initialMonths,
   paidMonths = [],
   paidExtra = 0,
   onClose,
@@ -239,29 +254,35 @@ function DebtForm({
   startId: string
   categories: { id: string; name: string }[]
   initial?: { name: string; total: number; cuota: number; categoryId: string | null }
+  initialMonths?: number
   paidMonths?: { year: number; month: number; amount: number }[]
   paidExtra?: number
   onClose: () => void
-  onSave: (input: { name: string; total: number; cuota: number; categoryId: string | null; startPeriodId: string }) => void
+  onSave: (input: { name: string; total: number; cuota: number; categoryId: string | null; startPeriodId: string; months: number }) => void
 }) {
   const [name, setName] = useState(initial?.name ?? '')
   const [totalText, setTotalText] = useState(initial ? String(initial.total) : '')
   const [cuotaText, setCuotaText] = useState(initial ? String(initial.cuota) : '')
   const [categoryId, setCategoryId] = useState(initial?.categoryId ?? '')
   const [startPeriodId, setStartPeriodId] = useState(startId)
+  const [months, setMonths] = useState(initialMonths ?? 0)
   const total = parseCOP(totalText)
   const cuota = parseCOP(cuotaText)
   const plan = planDebt(total, cuota)
+  const count = Math.max(1, Math.min(36, months > 0 ? months : plan.length || 1))
   const start = periods.find((period) => period.id === startPeriodId)
-  const lockStart = paidMonths.length > 0
   const settled = paidMonths.reduce((sum, item) => sum + item.amount, 0) + paidExtra
-  const pending = lockStart ? planDebt(Math.max(0, total - settled), cuota) : plan
-  const pendingStart = lockStart && paidMonths.length ? new Date(paidMonths[paidMonths.length - 1].year, paidMonths[paidMonths.length - 1].month + 1, 1) : null
+  const origin = start ? new Date(start.year, start.coveredMonth, 1) : null
+  const slots = origin ? Array.from({ length: count }, (_, index) => new Date(origin.getFullYear(), origin.getMonth() + index, 1)) : []
+  const paidByKey = new Map(paidMonths.map((item) => [`${item.year}-${item.month}`, item.amount]))
+  const outside = paidMonths.filter((item) => !slots.some((date) => date.getFullYear() === item.year && date.getMonth() === item.month))
+  const openSlots = slots.filter((date) => !paidByKey.has(`${date.getFullYear()}-${date.getMonth()}`))
+  const pendingAmounts = planSpan(Math.max(0, total - settled), cuota, openSlots.length || 1).slice(0, openSlots.length)
 
   function save(event: FormEvent) {
     event.preventDefault()
     if (!name.trim() || total <= 0 || cuota <= 0 || !categoryId || !start) return
-    onSave({ name: name.trim(), total, cuota, categoryId, startPeriodId })
+    onSave({ name: name.trim(), total, cuota, categoryId, startPeriodId, months: count })
   }
 
   return createPortal(
@@ -297,19 +318,32 @@ function DebtForm({
           Cuota mensual
           <input inputMode="numeric" placeholder="$0" value={cuotaText} onChange={(event) => setCuotaText(event.target.value)} />
         </label>
-        <label className="field">
-          Desde
-          <select value={startPeriodId} disabled={lockStart} onChange={(event) => setStartPeriodId(event.target.value)}>
-            {periods.map((item) => (
-              <option key={item.id} value={item.id}>
-                {MONTHS[item.coveredMonth]} {item.year}
-              </option>
-            ))}
-          </select>
-        </label>
-        {(paidMonths.length > 0 || (pending.length > 0 && (pendingStart || start))) && (
+        <div className="span-row">
+          <label className="field">
+            Desde
+            <select value={startPeriodId} onChange={(event) => setStartPeriodId(event.target.value)}>
+              {periods.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {MONTHS[item.coveredMonth]} {item.year}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            Meses
+            <input
+              type="number"
+              min={1}
+              max={36}
+              inputMode="numeric"
+              value={count}
+              onChange={(event) => setMonths(Math.max(1, Math.min(36, Number(event.target.value) || 1)))}
+            />
+          </label>
+        </div>
+        {(outside.length > 0 || slots.length > 0) && (
           <div className="debt-cuotas">
-            {paidMonths.map((item) => (
+            {outside.map((item) => (
               <div key={`paid-${item.year}-${item.month}`} className="debt-cuota is-paid">
                 <span>
                   {MONTHS[item.month]} {item.year}
@@ -317,18 +351,19 @@ function DebtForm({
                 <b>{formatCOP(item.amount)}</b>
               </div>
             ))}
-            {pending.map((amount, index) => {
-              const date = pendingStart ?? (start ? new Date(start.year, start.coveredMonth + index, 1) : null)
-              const when = date && pendingStart ? new Date(pendingStart.getFullYear(), pendingStart.getMonth() + index, 1) : date
-              if (!when) return null
-              return (
-                <div key={`${when.getFullYear()}-${when.getMonth()}`} className="debt-cuota">
+            {slots.flatMap((date) => {
+              const key = `${date.getFullYear()}-${date.getMonth()}`
+              const paid = paidByKey.get(key)
+              const amount = paid ?? pendingAmounts[openSlots.findIndex((item) => item.getFullYear() === date.getFullYear() && item.getMonth() === date.getMonth())]
+              if (amount == null || Number.isNaN(amount)) return []
+              return [(
+                <div key={key} className={paid != null ? 'debt-cuota is-paid' : 'debt-cuota'}>
                   <span>
-                    {MONTHS[when.getMonth()]} {when.getFullYear()}
+                    {MONTHS[date.getMonth()]} {date.getFullYear()}
                   </span>
                   <b>{formatCOP(amount)}</b>
                 </div>
-              )
+              )]
             })}
           </div>
         )}

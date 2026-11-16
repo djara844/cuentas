@@ -30,7 +30,7 @@ export function AuthScreen() {
     <main className="auth">
       <form className="auth-card" onSubmit={submit}>
         <p className="kicker">Cuentas</p>
-        <h1>{mode === 'up' ? 'Crea tu acceso' : 'Entra a tu libro'}</h1>
+        <h1>{mode === 'up' ? 'Crea tu acceso' : 'Entra'}</h1>
         <p>La base de datos ya está conectada. La cuenta es tuya: nadie más ve estos movimientos.</p>
         <label className="field">
           Correo

@@ -3,17 +3,33 @@ import { go, goSettings } from '../route'
 import { Mark } from '../icons'
 import { useBoard, type TaskCard } from '../tasks'
 
+function fold(value: string) {
+  return value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+}
+
 export function PendientesView() {
   const board = useBoard()
   const [filterId, setFilterId] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
   const [activeColumn, setActiveColumn] = useState(board.columns[0]?.id ?? '')
   const [draft, setDraft] = useState<Draft | null>(null)
   const [openCols, setOpenCols] = useState<Record<string, boolean>>({})
 
   const filter = board.categories.find((category) => category.id === filterId) ?? null
+  const needle = fold(query.trim())
+  const shownCategories = useMemo(
+    () => board.categories.filter((category) => !needle || fold(category.name).includes(needle)),
+    [board.categories, needle],
+  )
   const visible = useMemo(
-    () => board.cards.filter((card) => !filter || card.categoryId === filter.id),
-    [board.cards, filter],
+    () =>
+      board.cards.filter((card) => {
+        if (filter && card.categoryId !== filter.id) return false
+        if (!needle) return true
+        const category = board.categories.find((item) => item.id === card.categoryId)
+        return [card.title, card.detail, category?.name ?? ''].some((value) => fold(value).includes(needle))
+      }),
+    [board.cards, board.categories, filter, needle],
   )
   const counts = useMemo(() => {
     const map = new Map<string, number>()
@@ -100,41 +116,47 @@ export function PendientesView() {
         </button>
       </header>
 
-      <div className="icon-grid" role="toolbar" aria-label="Filtrar por categoría">
-        <button className={filter ? 'icon-box' : 'icon-box on'} style={{ ['--chip' as string]: '#e8e8e8' }} onClick={() => setFilterId(null)} aria-pressed={!filter}>
+      <label className="pend-search">
+        <span className="sr">Buscar</span>
+        <input
+          value={query}
+          placeholder="Buscar categoría o tarea"
+          onChange={(event) => setQuery(event.target.value)}
+        />
+      </label>
+      <div className="filters" role="toolbar" aria-label="Filtrar por categoría">
+        <button className={filter ? 'filter-chip' : 'filter-chip on'} style={{ ['--chip' as string]: '#e8e8e8' }} onClick={() => setFilterId(null)} aria-pressed={!filter}>
           <Mark name="Todas" />
-          <strong>Todas</strong>
+          Todas
           <em>{board.cards.length}</em>
         </button>
-        {board.categories.map((category) => {
+        {shownCategories.map((category) => {
           const on = filter?.id === category.id
           return (
             <button
               key={category.id}
-              className={on ? 'icon-box on' : 'icon-box'}
+              className={on ? 'filter-chip on' : 'filter-chip'}
               style={{ ['--chip' as string]: category.color }}
               aria-pressed={on}
               onClick={() => toggleFilter(category.id)}
             >
               <Mark name={category.name} />
-              <strong>{category.name}</strong>
+              {category.name}
               <em>{counts.get(category.id) ?? 0}</em>
             </button>
           )
         })}
       </div>
-      <div className="icon-grid" aria-label="Listas">
+      <div className="col-switch" aria-label="Listas">
         {board.columns.map((column) => {
           const count = visible.filter((card) => card.columnId === column.id).length
           return (
             <button
               key={column.id}
-              className={activeColumn === column.id ? 'icon-box on' : 'icon-box'}
-              style={{ ['--chip' as string]: column.name === 'Por hacer' ? '#94a3b8' : column.name === 'En curso' ? '#38bdf8' : '#c084fc' }}
+              className={activeColumn === column.id ? 'col-pill on' : 'col-pill'}
               onClick={() => showColumn(column.id)}
             >
-              <Mark name={column.name} />
-              <strong>{column.name}</strong>
+              {column.name}
               <em>{count}</em>
             </button>
           )

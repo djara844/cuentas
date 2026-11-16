@@ -70,8 +70,10 @@ function linesFor(db: DB, tasks: TaskCard[], date: Date): string[] {
 let timer = 0
 let running = false
 let again = false
+let memory: DB | null = null
 
-export function queueDayAlerts() {
+export function queueDayAlerts(book?: DB) {
+  if (book) memory = book
   if (!Capacitor.isNativePlatform()) return
   window.clearTimeout(timer)
   timer = window.setTimeout(() => {
@@ -97,7 +99,7 @@ async function scheduleDayAlerts() {
       vibration: true,
     })
 
-    const db = loadLedger()
+    const db = memory ?? loadLedger()
     if (!db) return
     const tasks = loadOpenTasks()
     const now = new Date()

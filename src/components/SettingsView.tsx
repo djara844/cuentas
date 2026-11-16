@@ -1,10 +1,113 @@
-import { useState } from 'react'
-import { isDB } from '../types'
+import { useEffect, useState } from 'react'
+import { MONTHS, isDB } from '../types'
 import { go } from '../route'
 import { useStore } from '../store'
-import { TASK_COLORS, useBoard } from '../tasks'
+import { useBoard } from '../tasks'
 import { DebtsPanel } from './DebtsPanel'
 import { Fold } from './Fold'
+
+function ProjectionPanel() {
+  const store = useStore()
+  const today = new Date()
+  const currentYear = today.getFullYear()
+  const currentMonth = today.getMonth()
+  const earliest = [...store.db.periods].sort((a, b) => a.sortOrder - b.sortOrder)[0]
+  const saved = store.db.projection
+  const [fromYear, setFromYear] = useState(saved?.fromYear ?? earliest?.year ?? currentYear)
+  const [fromMonth, setFromMonth] = useState(saved?.fromMonth ?? earliest?.coveredMonth ?? 0)
+  const [toYear, setToYear] = useState(saved?.toYear ?? currentYear)
+  const [toMonth, setToMonth] = useState(saved?.toMonth ?? currentMonth)
+  const fromYears = Array.from({ length: 11 }, (_, index) => currentYear - 10 + index)
+  const toYears = Array.from({ length: 4 }, (_, index) => currentYear + index)
+
+  useEffect(() => {
+    if (!saved) return
+    setFromYear(saved.fromYear)
+    setFromMonth(saved.fromMonth)
+    setToYear(saved.toYear)
+    setToMonth(saved.toMonth)
+  }, [saved])
+
+  function monthsFor(year: number, side: 'from' | 'to') {
+    const start = side === 'to' && year === currentYear ? currentMonth : 0
+    const end = side === 'from' && year === currentYear ? currentMonth : 11
+    return MONTHS.map((name, index) => ({ name, index })).filter((item) => item.index >= start && item.index <= end)
+  }
+
+  return (
+    <section className="projection" aria-label="Proyección">
+      <div>
+        <p className="kicker">Desde</p>
+        <div className="projection-row">
+          <label className="field">
+            Mes
+            <select aria-label="Mes desde" value={fromMonth} onChange={(event) => setFromMonth(Number(event.target.value))}>
+              {monthsFor(fromYear, 'from').map((item) => (
+                <option key={item.index} value={item.index}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            Año
+            <select
+              aria-label="Año desde"
+              value={fromYear}
+              onChange={(event) => {
+                const year = Number(event.target.value)
+                setFromYear(year)
+                if (year === currentYear) setFromMonth((month) => Math.min(month, currentMonth))
+              }}
+            >
+              {fromYears.map((year) => (
+                <option key={year} value={year}>
+                  {year}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
+      <div>
+        <p className="kicker">Hasta</p>
+        <div className="projection-row">
+          <label className="field">
+            Mes
+            <select aria-label="Mes hasta" value={toMonth} onChange={(event) => setToMonth(Number(event.target.value))}>
+              {monthsFor(toYear, 'to').map((item) => (
+                <option key={item.index} value={item.index}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            Año
+            <select
+              aria-label="Año hasta"
+              value={toYear}
+              onChange={(event) => {
+                const year = Number(event.target.value)
+                setToYear(year)
+                if (year === currentYear) setToMonth((month) => Math.max(month, currentMonth))
+              }}
+            >
+              {toYears.map((year) => (
+                <option key={year} value={year}>
+                  {year}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
+      <button type="button" className="btn primary" onClick={() => store.setProjection({ fromYear, fromMonth, toYear, toMonth })}>
+        Guardar
+      </button>
+    </section>
+  )
+}
 
 export function SettingsView({ scope }: { scope: 'general' | 'cuentas' | 'pendientes' }) {
   const store = useStore()
@@ -15,7 +118,7 @@ export function SettingsView({ scope }: { scope: 'general' | 'cuentas' | 'pendie
     [...store.db.periods].sort((a, b) => b.sortOrder - a.sortOrder)[0]
   const [taskName, setTaskName] = useState('')
   const [message, setMessage] = useState<string | null>(null)
-  const [debtsOpen, setDebtsOpen] = useState(false)
+  const [section, setSection] = useState<'deudas' | 'proyeccion' | null>(null)
 
   function exportDB() {
     const blob = new Blob([JSON.stringify(store.db, null, 2)], { type: 'application/json' })
@@ -62,12 +165,17 @@ export function SettingsView({ scope }: { scope: 'general' | 'cuentas' | 'pendie
             <span>Fijos</span>
             <small>Ítems que se copian en todos los meses, con su valor.</small>
           </button>
-          <button type="button" onClick={() => setDebtsOpen((open) => !open)}>
+          <button type="button" onClick={() => setSection((open) => (open === 'deudas' ? null : 'deudas'))}>
             <span>Deudas</span>
             <small>Cuotas que se pagan dentro de los gastos del mes.</small>
           </button>
+          {section === 'deudas' && cuentasPeriod && <DebtsPanel period={cuentasPeriod} manage bare />}
+          <button type="button" onClick={() => setSection((open) => (open === 'proyeccion' ? null : 'proyeccion'))}>
+            <span>Proyección</span>
+            <small>Desde y hasta cuándo se ven los meses y los años.</small>
+          </button>
+          {section === 'proyeccion' && <ProjectionPanel />}
         </nav>
-        {debtsOpen && cuentasPeriod && <DebtsPanel period={cuentasPeriod} manage bare />}
         </>
       )}
 
@@ -98,7 +206,7 @@ export function SettingsView({ scope }: { scope: 'general' | 'cuentas' | 'pendie
 
       <section className="panel">
         <h2>Respaldo</h2>
-        <p>Descarga el libro o recupéralo desde un archivo JSON.</p>
+        <p>Descarga los datos o recupéralos desde un archivo JSON.</p>
         <div className="head-actions">
           <button className="btn" onClick={exportDB}>
             Exportar JSON
@@ -127,29 +235,39 @@ export function SettingsView({ scope }: { scope: 'general' | 'cuentas' | 'pendie
       <section className="config-module" aria-label="Pendientes">
         <h2>Pendientes</h2>
         <Fold title="Categorías" meta={board.categories.length}>
-        <p className="hint">Categorías en el orden del tablero.</p>
+        <p className="hint">Cambia el nombre o el color. Si la eliminas, sus tareas pasan a Varios.</p>
         <ol className="order-list">
-          {board.categories.map((category, index) => (
+          {board.categories.map((category, index) => {
+            const fixed = category.name.trim().toLowerCase() === 'varios'
+            const nextFixed = board.categories[index + 1]?.name.trim().toLowerCase() === 'varios'
+            return (
             <li key={category.id}>
-              <i className="dot" style={{ background: category.color }} />
+              <button type="button" className="dot-btn" aria-label={`Cambiar color de ${category.name}`} onClick={() => board.recolorCategory(category.id)}>
+                <i className="dot" style={{ background: category.color }} />
+              </button>
               <input
                 aria-label={`Nombre de ${category.name}`}
                 value={category.name}
+                readOnly={fixed}
                 onChange={(event) => board.updateCategory(category.id, { name: event.target.value })}
               />
-              <button type="button" aria-label={`Subir ${category.name}`} disabled={index === 0} onClick={() => board.moveCategory(category.id, -1)}>
+              <button type="button" aria-label={`Subir ${category.name}`} disabled={fixed || index === 0} onClick={() => board.moveCategory(category.id, -1)}>
                 ↑
               </button>
               <button
                 type="button"
                 aria-label={`Bajar ${category.name}`}
-                disabled={index === board.categories.length - 1}
+                disabled={fixed || nextFixed || index === board.categories.length - 1}
                 onClick={() => board.moveCategory(category.id, 1)}
               >
                 ↓
               </button>
+              <button type="button" aria-label={`Eliminar ${category.name}`} disabled={fixed} onClick={() => board.removeCategory(category.id)}>
+                ×
+              </button>
             </li>
-          ))}
+            )
+          })}
         </ol>
         </Fold>
         <form
@@ -158,7 +276,7 @@ export function SettingsView({ scope }: { scope: 'general' | 'cuentas' | 'pendie
             event.preventDefault()
             const name = taskName.trim()
             if (!name) return
-            board.addCategory(name, TASK_COLORS[board.categories.length % TASK_COLORS.length])
+            board.addCategory(name)
             setTaskName('')
           }}
         >

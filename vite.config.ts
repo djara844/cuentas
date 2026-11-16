@@ -21,7 +21,7 @@ export default defineConfig(({ mode }) => {
       manifest: {
         name: 'Cuentas',
         short_name: 'Cuentas',
-        description: 'Libro de caja mensual',
+        description: 'Cuentas mensuales',
         lang: 'es',
         start_url: '/',
         scope: '/',

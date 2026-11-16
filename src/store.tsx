@@ -3,9 +3,9 @@ import { App } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
 import type { SupabaseClient, Session } from '@supabase/supabase-js'
 import { readCloud, writeCloud } from './cloudLedger'
-import { hasDeletes, loadMeta, markLocalChange, mergeBooks, noteDeleted, saveMeta, type SyncMeta } from './syncBook'
-import type { Category, DB, Debt, Entry, Kind, Period, Template } from './types'
-import { instantiateTemplates, isDB, periodLabel, planDebt, sortOrderFor, uid } from './types'
+import { loadMeta, noteDeleted, saveMeta, type SyncMeta } from './syncBook'
+import type { Category, DB, Debt, Entry, Kind, Period, Projection, Template } from './types'
+import { instantiateTemplates, isDB, periodLabel, planDebt, planSpan, sortOrderFor, templateCovers, uid } from './types'
 import { buildSeed, paintedColor } from './seed'
 import {
   authMessage,
@@ -27,9 +27,20 @@ import {
 
 const STORAGE_KEY = 'cuentas-db-v2'
 
+function projectionOf(value: Projection | undefined): Projection | undefined {
+  if (!value) return undefined
+  const { fromYear, fromMonth, toYear, toMonth } = value
+  if (![fromYear, fromMonth, toYear, toMonth].every((item) => Number.isInteger(item))) return undefined
+  if (fromMonth < 0 || fromMonth > 11 || toMonth < 0 || toMonth > 11) return undefined
+  if (toYear * 12 + toMonth < fromYear * 12 + fromMonth) return undefined
+  return { fromYear, fromMonth, toYear, toMonth }
+}
+
 function normalize(db: DB): DB {
+  const projection = projectionOf(db.projection)
   return {
     ...db,
+    projection,
     templates: Array.isArray(db.templates) ? db.templates : [],
     categories: db.categories.map((category) => ({ ...category, color: paintedColor(category.id, category.color) })),
     entries: db.entries.map((entry) => ({
@@ -71,6 +82,19 @@ function prepareBook(db: DB): DB {
 function monthKey(periods: Period[], periodId: string) {
   const period = periods.find((item) => item.id === periodId)
   return period ? period.year * 100 + period.coveredMonth : 0
+}
+
+function debtSpan(debt: Debt, periods: Period[], entries: Entry[]) {
+  if (typeof debt.months === 'number' && debt.months > 0) return Math.min(36, debt.months)
+  const start = debt.startYear * 12 + debt.startMonth
+  let last = start
+  for (const entry of entries) {
+    if (entry.debtId !== debt.id || entry.advance) continue
+    const period = periods.find((item) => item.id === entry.periodId)
+    if (!period) continue
+    last = Math.max(last, period.year * 12 + period.coveredMonth)
+  }
+  return Math.max(1, Math.min(36, last - start + 1))
 }
 
 function balanceDebts(db: DB): DB {
@@ -142,10 +166,6 @@ function loadLocal(): DB | null {
   }
 }
 
-function saveLocal(db: DB) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(db))
-}
-
 interface Store {
   ready: boolean
   db: DB
@@ -161,17 +181,18 @@ interface Store {
   updatePeriod: (id: string, patch: Partial<Pick<Period, 'label'>>) => void
   removePeriod: (id: string) => void
   ensureYear: (year: number) => Period[]
+  setProjection: (range: Projection) => void
   addEntry: (input: { periodId: string; kind: Kind; description?: string; categoryId?: string | null; amount?: number; paid?: boolean; dueDay?: number | null; debtId?: string | null; advance?: boolean }) => Entry
   addDebtAdvance: (input: { periodId: string; debtId: string; description: string; categoryId: string | null; amount: number; paid?: boolean; dueDay?: number | null }) => void
   updateEntry: (id: string, patch: Partial<Pick<Entry, 'description' | 'amount' | 'categoryId' | 'paid' | 'dueDay' | 'debtId' | 'advance'>>) => void
   setDebtPayment: (debtId: string, periodId: string, amount: number) => void
-  addDebt: (input: { name: string; total: number; cuota: number; categoryId: string | null; startPeriodId: string }) => string
-  updateDebt: (id: string, input: { name: string; total: number; cuota: number; categoryId: string | null; startPeriodId: string }) => void
+  addDebt: (input: { name: string; total: number; cuota: number; categoryId: string | null; startPeriodId: string; months: number }) => string
+  updateDebt: (id: string, input: { name: string; total: number; cuota: number; categoryId: string | null; startPeriodId: string; months: number }) => void
   removeDebt: (id: string) => void
   addTerm: (input: { periodId: string; kind: Kind; description: string; categoryId?: string | null; amount: number; startDate: string; months: number }) => string
   removeEntry: (id: string) => void
-  addTemplate: (input: { kind: Kind; description: string; amount: number; categoryId?: string | null }) => { template: Template; entries: Entry[] }
-  updateTemplate: (id: string, patch: Partial<Pick<Template, 'description' | 'amount' | 'categoryId' | 'kind'>>) => void
+  addTemplate: (input: { kind: Kind; description: string; amount: number; categoryId?: string | null; startYear?: number | null; startMonth?: number | null; months?: number | null }) => { template: Template; entries: Entry[] }
+  updateTemplate: (id: string, patch: Partial<Pick<Template, 'description' | 'amount' | 'categoryId' | 'kind' | 'startYear' | 'startMonth' | 'months'>>) => void
   applyTemplateAmount: (id: string) => void
   removeTemplate: (id: string) => void
   importDB: (db: DB) => void
@@ -232,34 +253,41 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const normalized = prepareBook(next)
     dbRef.current = normalized
     setDb(normalized)
-    saveLocal(normalized)
-    saveMeta(meta)
-    if (!readConfig()) setMode(meta.dirty || meta.provisional ? 'local' : 'neon')
+    saveMeta({ ...meta, dirty: false, provisional: false })
+    if (!readConfig()) setMode('neon')
   }
+
+  const saving = useRef(0)
 
   function commit(recipe: (current: DB) => DB) {
     const next = balanceDebts(recipe(dbRef.current))
     dbRef.current = next
     setDb(next)
-    saveLocal(next)
-    if (!readConfig()) {
-      markLocalChange()
-      setMode('local')
-      scheduleSync()
-    }
+    if (readConfig()) return next
+    setMode('neon')
+    saving.current += 1
+    void writeCloud(next)
+      .then((updatedAt) => {
+        if (updatedAt == null) {
+          setError('No se pudo guardar en la base de datos.')
+          return
+        }
+        setError(null)
+        saveMeta({
+          revision: updatedAt,
+          dirty: false,
+          provisional: false,
+          deleted: { categories: [], periods: [], entries: [], templates: [], debts: [] },
+        })
+      })
+      .finally(() => {
+        saving.current -= 1
+      })
     return next
   }
 
-  function scheduleSync() {
-    if (readConfig() || !navigator.onLine) return
-    window.clearTimeout(timers.current.cloud)
-    timers.current.cloud = window.setTimeout(() => {
-      void reconcile()
-    }, 400)
-  }
-
   async function reconcile() {
-    if (readConfig() || !navigator.onLine) return
+    if (readConfig() || !navigator.onLine || saving.current > 0) return
     if (cloud.current) {
       syncQueued.current = true
       return
@@ -267,37 +295,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     cloud.current = true
     try {
       const remote = await readCloud()
-      if (remote.status === 'down') {
-        setMode('local')
+      if (remote.status !== 'ok') {
+        setError('No se pudo leer la base de datos.')
         return
       }
       const meta = loadMeta()
-      const local = dbRef.current
-      if (meta.provisional && remote.status === 'ok') {
-        showBook(remote.db, { revision: remote.updatedAt, dirty: false, provisional: false, deleted: { categories: [], periods: [], entries: [], templates: [], debts: [] } })
-        return
-      }
-      const pending = meta.dirty || hasDeletes(meta)
-      const cloudDebts = remote.status === 'ok' ? (remote.db.debts?.length ?? 0) : 0
-      const cloudAhead = remote.status === 'ok' && (remote.updatedAt !== meta.revision || cloudDebts > (local.debts?.length ?? 0))
-      if (!pending) {
-        if (remote.status === 'empty') {
-          const updatedAt = await writeCloud(local)
-          if (updatedAt == null) return
-          showBook(local, { ...meta, revision: updatedAt, dirty: false, provisional: false })
-          return
-        }
-        if (cloudAhead) showBook(remote.db, { ...meta, revision: remote.updatedAt, dirty: false, provisional: false })
-        else if (remote.status === 'ok') setMode('neon')
-        return
-      }
-      const merged = prepareBook(cloudAhead ? mergeBooks(local, normalize(remote.db), meta) : local)
-      const updatedAt = await writeCloud(merged)
-      if (updatedAt == null) {
-        setMode('local')
-        return
-      }
-      showBook(merged, { revision: updatedAt, dirty: false, provisional: false, deleted: { categories: [], periods: [], entries: [], templates: [], debts: [] } })
+      if (remote.updatedAt !== meta.revision) {
+        showBook(remote.db, {
+          revision: remote.updatedAt,
+          dirty: false,
+          provisional: false,
+          deleted: { categories: [], periods: [], entries: [], templates: [], debts: [] },
+        })
+      } else setMode('neon')
     } finally {
       cloud.current = false
       if (syncQueued.current) {
@@ -320,11 +330,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       await replaceDB(sb, userId, local)
       dbRef.current = local
       setDb(local)
-      saveLocal(local)
     } else {
       dbRef.current = remoteDb
       setDb(remoteDb)
-      saveLocal(remoteDb)
     }
   }
 
@@ -363,45 +371,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     ;(async () => {
       try {
         const config = readConfig()
-        const local = loadLocal()
         if (!config) {
-          const meta = loadMeta()
-          const blankDeleted = { categories: [], periods: [], entries: [], templates: [], debts: [] }
           if (!navigator.onLine) {
-            const cached = local ?? buildSeed()
-            showBook(cached, { ...meta, revision: meta.revision, dirty: meta.dirty, provisional: local ? meta.provisional : true, deleted: meta.deleted })
+            setError('Sin conexión. Los datos están en la base de datos.')
             setReady(true)
             return
           }
           const remote = await readCloud()
           if (cancel) return
           if (remote.status === 'ok') {
-            const pending = Boolean(local) && (meta.dirty || hasDeletes(meta))
-            if (pending && local) {
-              const merged = prepareBook(mergeBooks(local, normalize(remote.db), meta))
-              showBook(merged, { revision: remote.updatedAt, dirty: true, provisional: false, deleted: meta.deleted })
-              setReady(true)
-              void reconcile()
-              return
-            }
             showBook(normalize(remote.db), {
               revision: remote.updatedAt,
               dirty: false,
               provisional: false,
-              deleted: blankDeleted,
+              deleted: { categories: [], periods: [], entries: [], templates: [], debts: [] },
             })
+            setError(null)
             setReady(true)
             return
           }
-          if (remote.status === 'empty') {
-            const seeded = local ?? buildSeed()
-            showBook(seeded, { revision: null, dirty: true, provisional: false, deleted: blankDeleted })
-            setReady(true)
-            void reconcile()
-            return
-          }
-          const cached = local ?? buildSeed()
-          showBook(cached, { ...meta, provisional: local ? meta.provisional : true })
+          setError(remote.status === 'empty' ? 'No se pudo abrir la base de datos.' : 'No se pudo leer la base de datos.')
           setReady(true)
           return
         }
@@ -411,7 +400,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (!data.session) {
           if (!cancel) {
             clientRef.current = sb
-            const initial = local ?? buildSeed()
+            const initial = buildSeed()
             dbRef.current = initial
             setDb(initial)
             setNeedsAuth(true)
@@ -507,7 +496,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               amount: keepAmounts ? e.amount : 0,
               sortOrder: e.sortOrder ?? index,
             }))
-          : instantiateTemplates(period.id, dbRef.current.templates)
+          : instantiateTemplates(period.id, dbRef.current.templates, { year, month: coveredMonth })
         commit((current) => ({
           ...current,
           periods: [...current.periods, period],
@@ -567,7 +556,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             sortOrder: sortOrderFor(year, month),
           }
           created.push(period)
-          entries.push(...instantiateTemplates(period.id, dbRef.current.templates))
+          entries.push(...instantiateTemplates(period.id, dbRef.current.templates, { year, month }))
         }
         const months = [...existing, ...created].sort((a, b) => a.coveredMonth - b.coveredMonth)
         if (!created.length) return months
@@ -581,6 +570,55 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           for (const entry of entries) await upsertEntry(sb, userId, entry)
         })
         return months
+      },
+      setProjection: (range) => {
+        const today = new Date()
+        const now = today.getFullYear() * 12 + today.getMonth()
+        const min = (today.getFullYear() - 10) * 12
+        const max = (today.getFullYear() + 3) * 12 + 11
+        const from = Math.max(min, Math.min(now, range.fromYear * 12 + range.fromMonth))
+        const to = Math.max(now, Math.min(max, range.toYear * 12 + range.toMonth))
+        const projection: Projection = {
+          fromYear: Math.floor(from / 12),
+          fromMonth: from % 12,
+          toYear: Math.floor(to / 12),
+          toMonth: to % 12,
+        }
+        const current = dbRef.current
+        const saved = current.projection
+        const same =
+          saved?.fromYear === projection.fromYear &&
+          saved.fromMonth === projection.fromMonth &&
+          saved.toYear === projection.toYear &&
+          saved.toMonth === projection.toMonth
+        const have = new Set(current.periods.map((period) => period.year * 12 + period.coveredMonth))
+        const created: Period[] = []
+        const entries: Entry[] = []
+        for (let cursor = from; cursor <= to; cursor++) {
+          if (have.has(cursor)) continue
+          const year = Math.floor(cursor / 12)
+          const month = cursor % 12
+          const period: Period = {
+            id: uid(),
+            label: periodLabel(year, month),
+            year,
+            coveredMonth: month,
+            sortOrder: sortOrderFor(year, month),
+          }
+          created.push(period)
+          if (cursor > now) entries.push(...instantiateTemplates(period.id, current.templates, { year, month }))
+        }
+        if (same && !created.length) return
+        commit((book) => ({
+          ...book,
+          projection,
+          periods: [...book.periods, ...created],
+          entries: [...book.entries, ...entries],
+        }))
+        void remote(async (sb, userId) => {
+          for (const period of created) await upsertPeriod(sb, userId, period)
+          for (const entry of entries) await upsertEntry(sb, userId, entry)
+        })
       },
       addEntry: ({ periodId, kind, description = '', categoryId = null, amount = 0, paid = false, dueDay = null, debtId = null, advance = false }) => {
         const siblings = dbRef.current.entries.filter((e) => e.periodId === periodId && e.kind === kind)
@@ -778,7 +816,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               sortOrder: sortOrderFor(year, month),
             }
             createdPeriods.push(period)
-            carried.push(...instantiateTemplates(period.id, dbRef.current.templates))
+            carried.push(...instantiateTemplates(period.id, dbRef.current.templates, { year: period.year, month: period.coveredMonth }))
           }
         }
         const periods = [...dbRef.current.periods, ...createdPeriods]
@@ -819,9 +857,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         })
         return created[0].id
       },
-      addDebt: ({ name, total, cuota, categoryId, startPeriodId }) => {
+      addDebt: ({ name, total, cuota, categoryId, startPeriodId, months }) => {
         const start = dbRef.current.periods.find((period) => period.id === startPeriodId)
-        const amounts = planDebt(total, cuota)
+        const count = Math.max(1, Math.min(36, Math.round(months) || planDebt(total, cuota).length || 1))
+        const amounts = planSpan(total, cuota, count)
         if (!start || !name.trim() || !amounts.length) return ''
         const years = new Set<number>()
         for (let index = 0; index < amounts.length; index++) years.add(new Date(start.year, start.coveredMonth + index, 1).getFullYear())
@@ -840,7 +879,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               sortOrder: sortOrderFor(year, month),
             }
             createdPeriods.push(period)
-            carried.push(...instantiateTemplates(period.id, dbRef.current.templates))
+            carried.push(...instantiateTemplates(period.id, dbRef.current.templates, { year: period.year, month: period.coveredMonth }))
           }
         }
         const periods = [...dbRef.current.periods, ...createdPeriods]
@@ -852,6 +891,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           categoryId,
           startYear: start.year,
           startMonth: start.coveredMonth,
+          months: amounts.length,
         }
         const created: Entry[] = []
         amounts.forEach((amount, index) => {
@@ -889,7 +929,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         })
         return debt.id
       },
-      updateDebt: (id, { name, total, cuota, categoryId, startPeriodId }) => {
+      updateDebt: (id, { name, total, cuota, categoryId, startPeriodId, months }) => {
         const debt = (dbRef.current.debts ?? []).find((item) => item.id === id)
         const start = dbRef.current.periods.find((period) => period.id === startPeriodId)
         const trimmed = name.trim()
@@ -900,10 +940,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           .filter((entry) => entry.debtId === id && !entry.advance)
           .sort((a, b) => (a.termIndex ?? 0) - (b.termIndex ?? 0))
         const paidCuotas = cuotas.filter((entry) => entry.paid)
-        const moveStart = paidCuotas.length === 0
-        const startYear = moveStart ? start.year : debt.startYear
-        const startMonth = moveStart ? start.coveredMonth : debt.startMonth
-        const planChanged = debt.total !== nextTotal || debt.cuota !== nextCuota || startYear !== debt.startYear || startMonth !== debt.startMonth
+        const startYear = start.year
+        const startMonth = start.coveredMonth
+        const currentMonths = debtSpan(debt, dbRef.current.periods, dbRef.current.entries)
+        const requestedMonths = Math.max(1, Math.min(36, Math.round(months) || currentMonths))
+        const planChanged =
+          debt.total !== nextTotal ||
+          debt.cuota !== nextCuota ||
+          startYear !== debt.startYear ||
+          startMonth !== debt.startMonth ||
+          requestedMonths !== currentMonths
         const describe = (entry: Entry) => ({
           ...entry,
           description: entry.advance && entry.description !== debt.name ? entry.description : trimmed,
@@ -912,27 +958,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (!planChanged) {
           commit((current) => ({
             ...current,
-            debts: (current.debts ?? []).map((item) => (item.id === id ? { ...item, name: trimmed, total: nextTotal, cuota: nextCuota, categoryId } : item)),
+            debts: (current.debts ?? []).map((item) =>
+              item.id === id ? { ...item, name: trimmed, total: nextTotal, cuota: nextCuota, categoryId, months: requestedMonths } : item,
+            ),
             entries: current.entries.map((entry) => (entry.debtId === id ? describe(entry) : entry)),
           }))
           return
         }
+        const window = Array.from({ length: requestedMonths }, (_, index) => {
+          const date = new Date(startYear, startMonth + index, 1)
+          return { year: date.getFullYear(), month: date.getMonth() }
+        })
+        const paidKeys = new Set(
+          paidCuotas.map((entry) => {
+            const period = dbRef.current.periods.find((item) => item.id === entry.periodId)
+            return period ? `${period.year}-${period.coveredMonth}` : ''
+          }),
+        )
+        const openSlots = window.filter((slot) => !paidKeys.has(`${slot.year}-${slot.month}`))
         const advances = dbRef.current.entries.filter((entry) => entry.debtId === id && entry.advance).reduce((sum, entry) => sum + entry.amount, 0)
         const paidSum = paidCuotas.reduce((sum, entry) => sum + entry.amount, 0) + advances
-        const amounts = planDebt(Math.max(0, nextTotal - paidSum), nextCuota)
-        let originYear = startYear
-        let originMonth = startMonth
-        if (paidCuotas.length) {
-          const lastPaid = paidCuotas[paidCuotas.length - 1]
-          const period = dbRef.current.periods.find((item) => item.id === lastPaid.periodId)
-          if (period) {
-            const date = new Date(period.year, period.coveredMonth + 1, 1)
-            originYear = date.getFullYear()
-            originMonth = date.getMonth()
-          }
-        }
-        const years = new Set<number>()
-        for (let index = 0; index < amounts.length; index++) years.add(new Date(originYear, originMonth + index, 1).getFullYear())
+        const amounts = planSpan(Math.max(0, nextTotal - paidSum), nextCuota, openSlots.length || 1).slice(0, openSlots.length)
+        const years = new Set(window.map((slot) => slot.year))
         const createdPeriods: Period[] = []
         const carried: Entry[] = []
         for (const year of years) {
@@ -948,14 +995,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               sortOrder: sortOrderFor(year, month),
             }
             createdPeriods.push(period)
-            carried.push(...instantiateTemplates(period.id, dbRef.current.templates))
+            carried.push(...instantiateTemplates(period.id, dbRef.current.templates, { year: period.year, month: period.coveredMonth }))
           }
         }
         const periods = [...dbRef.current.periods, ...createdPeriods]
         const created: Entry[] = []
         amounts.forEach((amount, index) => {
-          const date = new Date(originYear, originMonth + index, 1)
-          const period = periods.find((item) => item.year === date.getFullYear() && item.coveredMonth === date.getMonth())
+          const slot = openSlots[index]
+          if (!slot || amount <= 0) return
+          const period = periods.find((item) => item.year === slot.year && item.coveredMonth === slot.month)
           if (!period) return
           created.push({
             id: uid(),
@@ -964,25 +1012,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             kind: 'gasto',
             description: trimmed,
             amount,
-            sortOrder: 70 + paidCuotas.length + index,
+            sortOrder: 70 + index,
             templateId: null,
             paid: false,
             dueDay: null,
             termId: id,
             termTotal: paidCuotas.length + amounts.length,
-            termIndex: paidCuotas.length + index + 1,
+            termIndex: index + 1,
             debtId: id,
             advance: false,
           })
         })
         const drop = cuotas.filter((entry) => !entry.paid).map((entry) => entry.id)
         if (drop.length) noteDeleted('entries', drop)
-        const numbered = [...paidCuotas.map((entry) => describe(entry)), ...created].map((entry, index, list) => ({
-          ...entry,
-          termId: id,
-          termIndex: index + 1,
-          termTotal: list.length,
-        }))
+        const numbered = [...paidCuotas.map((entry) => describe(entry)), ...created]
+          .sort((a, b) => monthKey(periods, a.periodId) - monthKey(periods, b.periodId))
+          .map((entry, index, list) => ({
+            ...entry,
+            termId: id,
+            termIndex: index + 1,
+            termTotal: list.length,
+          }))
         commit((current) => {
           const dropIds = new Set(drop)
           const paidIds = new Set(paidCuotas.map((entry) => entry.id))
@@ -990,7 +1040,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             ...current,
             periods: [...current.periods, ...createdPeriods],
             debts: (current.debts ?? []).map((item) =>
-              item.id === id ? { ...item, name: trimmed, total: nextTotal, cuota: nextCuota, categoryId, startYear, startMonth } : item,
+              item.id === id ? { ...item, name: trimmed, total: nextTotal, cuota: nextCuota, categoryId, startYear, startMonth, months: requestedMonths } : item,
             ),
             entries: [
               ...current.entries
@@ -1020,7 +1070,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           for (const entryId of ids) await remoteDeleteEntry(sb, entryId)
         })
       },
-      addTemplate: ({ kind, description, amount, categoryId = null }) => {
+      addTemplate: ({ kind, description, amount, categoryId = null, startYear = null, startMonth = null, months = null }) => {
         const template: Template = {
           id: uid(),
           kind,
@@ -1028,15 +1078,45 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           amount,
           categoryId,
           sortOrder: dbRef.current.templates.filter((item) => item.kind === kind).length,
+          startYear,
+          startMonth,
+          months,
         }
-        const created = dbRef.current.periods.map((period) => instantiateTemplates(period.id, [template])[0])
+        const createdPeriods: Period[] = []
+        let periods = dbRef.current.periods
+        if (startYear != null && startMonth != null && months != null && months > 0) {
+          const years = new Set<number>()
+          for (let index = 0; index < months; index += 1) years.add(new Date(startYear, startMonth + index, 1).getFullYear())
+          for (const year of years) {
+            const have = new Set(periods.filter((period) => period.year === year).map((period) => period.coveredMonth))
+            for (let month = 0; month < 12; month += 1) {
+              if (have.has(month)) continue
+              const period: Period = {
+                id: uid(),
+                label: periodLabel(year, month),
+                year,
+                coveredMonth: month,
+                sortOrder: sortOrderFor(year, month),
+              }
+              createdPeriods.push(period)
+              have.add(month)
+            }
+          }
+          periods = [...periods, ...createdPeriods]
+        }
+        const created = periods
+          .filter((period) => templateCovers(template, period.year, period.coveredMonth))
+          .map((period) => instantiateTemplates(period.id, [template], { year: period.year, month: period.coveredMonth })[0])
+          .filter((entry): entry is Entry => Boolean(entry))
         commit((current) => ({
           ...current,
+          periods: [...current.periods, ...createdPeriods],
           templates: [...current.templates, template],
           entries: [...current.entries, ...created],
         }))
         void remote(async (sb, userId) => {
           await upsertTemplate(sb, userId, template)
+          for (const period of createdPeriods) await upsertPeriod(sb, userId, period)
           for (const entry of created) await upsertEntry(sb, userId, entry)
         })
         return { template, entries: created }
@@ -1044,32 +1124,80 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       updateTemplate: (id, patch) => {
         let updated: Template | undefined
         const linked: Entry[] = []
+        const removed: string[] = []
+        const created: Entry[] = []
+        const createdPeriods: Period[] = []
         commit((current) => {
           const templates = current.templates.map((item) => {
             if (item.id !== id) return item
-            updated = { ...item, ...patch, description: patch.description !== undefined ? patch.description : item.description }
+            updated = {
+              ...item,
+              ...patch,
+              description: patch.description !== undefined ? patch.description : item.description,
+            }
             return updated
           })
-          const entries = current.entries.map((entry) => {
-            if (entry.templateId !== id || !updated) return entry
+          if (!updated) return current
+          const template = updated
+          let periods = current.periods
+          if (template.startYear != null && template.startMonth != null && template.months != null && template.months > 0) {
+            const years = new Set<number>()
+            for (let index = 0; index < template.months; index += 1) years.add(new Date(template.startYear, template.startMonth + index, 1).getFullYear())
+            for (const year of years) {
+              const have = new Set(periods.filter((period) => period.year === year).map((period) => period.coveredMonth))
+              for (let month = 0; month < 12; month += 1) {
+                if (have.has(month)) continue
+                const period: Period = {
+                  id: uid(),
+                  label: periodLabel(year, month),
+                  year,
+                  coveredMonth: month,
+                  sortOrder: sortOrderFor(year, month),
+                }
+                createdPeriods.push(period)
+                have.add(month)
+              }
+            }
+            periods = [...periods, ...createdPeriods]
+          }
+          const entries = current.entries.flatMap((entry) => {
+            if (entry.templateId !== id) return [entry]
+            const period = periods.find((item) => item.id === entry.periodId)
+            const inside = period ? templateCovers(template, period.year, period.coveredMonth) : true
+            if (!inside && !entry.paid) {
+              removed.push(entry.id)
+              return []
+            }
             const next = {
               ...entry,
-              description: updated.description,
-              categoryId: updated.categoryId,
-              kind: updated.kind,
+              description: template.description,
+              categoryId: template.categoryId,
+              kind: template.kind,
             }
             linked.push(next)
-            return next
+            return [next]
           })
-          return { ...current, templates, entries }
+          const have = new Set(entries.filter((entry) => entry.templateId === id).map((entry) => entry.periodId))
+          for (const period of periods) {
+            if (!templateCovers(template, period.year, period.coveredMonth) || have.has(period.id)) continue
+            const entry = instantiateTemplates(period.id, [template], { year: period.year, month: period.coveredMonth })[0]
+            if (!entry) continue
+            created.push(entry)
+            linked.push(entry)
+            entries.push(entry)
+          }
+          return { ...current, periods, templates, entries }
         })
         if (!updated) return
+        if (removed.length) noteDeleted('entries', removed)
         const template = updated
         window.clearTimeout(timers.current[id])
         timers.current[id] = window.setTimeout(() => {
           void remote(async (sb, userId) => {
             await upsertTemplate(sb, userId, template)
+            for (const period of createdPeriods) await upsertPeriod(sb, userId, period)
             for (const entry of linked) await upsertEntry(sb, userId, entry)
+            for (const entryId of removed) await remoteDeleteEntry(sb, entryId)
           })
         }, 300)
       },

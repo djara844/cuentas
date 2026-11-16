@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { StoreProvider, useStore } from './store'
 import { go, goPeriod, goSettings, readRoute, type Route } from './route'
-import { debtApplied, periodStats } from './types'
+import { debtApplied, periodIsListed, periodStats } from './types'
 import { formatCOP } from './money'
 import { PeriodView } from './components/PeriodView'
 import { YearView } from './components/YearView'
@@ -15,7 +15,7 @@ import { HomeView } from './components/HomeView'
 import { PendientesView } from './components/PendientesView'
 import { VaultView } from './components/VaultView'
 import { CalendarView } from './components/CalendarView'
-import { isLoggedIn, logout } from './session'
+import { can, isDiego, isLoggedIn, logout } from './session'
 import { queueDayAlerts } from './reminders'
 import { MONTHS } from './types'
 
@@ -36,16 +36,17 @@ function Shell({ onLogout }: { onLogout: () => void }) {
   const [year, setYear] = useState(currentYear)
 
   const years = useMemo(() => {
-    const set = new Set(store.db.periods.map((p) => p.year))
-    set.add(year)
-    const list = Array.from(set).sort((a, b) => a - b)
-    const upcoming = (list[list.length - 1] ?? year) + 1
-    if (!list.includes(upcoming)) list.push(upcoming)
-    return list
-  }, [store.db.periods, year])
+    const today = new Date()
+    const set = new Set(store.db.periods.filter((period) => periodIsListed(store.db, period, today)).map((period) => period.year))
+    if (!set.size) set.add(today.getFullYear())
+    return Array.from(set).sort((a, b) => a - b)
+  }, [store.db])
 
   const debtToDate = (store.db.debts ?? []).reduce((sum, debt) => sum + Math.max(0, debt.total - debtApplied(store.db, debt.id).paid), 0)
-  const periods = store.db.periods.filter((p) => p.year === year).sort((a, b) => a.sortOrder - b.sortOrder)
+  const today = new Date()
+  const periods = store.db.periods
+    .filter((period) => period.year === year && periodIsListed(store.db, period, today))
+    .sort((a, b) => a.sortOrder - b.sortOrder)
   const selected = store.db.periods.find((p) => p.id === route.periodId) ?? null
   const openedPeriod = useRef(false)
 
@@ -68,13 +69,23 @@ function Shell({ onLogout }: { onLogout: () => void }) {
   }, [store.ready, store.needsAuth, route.view, route.periodId, store])
 
   useEffect(() => {
+    if (!store.ready || store.needsAuth) return
+    if (route.view !== 'periodo' || !selected) return
+    if (periodIsListed(store.db, selected)) return
+    const fallback = store.db.periods
+      .filter((period) => period.year === selected.year && periodIsListed(store.db, period))
+      .sort((a, b) => b.sortOrder - a.sortOrder)[0]
+    if (fallback) goPeriod(fallback.id)
+  }, [store.ready, store.needsAuth, route.view, selected, store.db])
+
+  useEffect(() => {
     if (route.view !== 'periodo') return
     document.querySelector('.chip.on')?.scrollIntoView({ inline: 'center', block: 'nearest' })
   }, [route.view, selected?.id, year])
 
   useEffect(() => {
     if (!store.ready) return
-    queueDayAlerts()
+    queueDayAlerts(store.db)
   }, [store.ready, store.db])
 
   function openMes() {
@@ -86,7 +97,13 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     goPeriod(match.id)
   }
 
-  if (route.view === 'inicio') {
+  const blocked =
+    (route.view === 'pendientes' && !can('pendientes')) ||
+    (route.view === 'calendario' && !can('calendario')) ||
+    (route.view === 'privado' && !isDiego()) ||
+    (route.view === 'ajustes' && route.settings !== 'cuentas' && !can('ajustes'))
+
+  if (route.view === 'inicio' || blocked) {
     return (
       <div className="app home-app">
         <HomeView onLogout={onLogout} />
@@ -103,7 +120,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
   }
 
   if (route.view === 'calendario') {
-    if (!store.ready) return <div className="boot">Abriendo el libro…</div>
+    if (!store.ready) return <div className="boot">Cargando</div>
     return (
       <div className="app">
         <CalendarView />
@@ -120,7 +137,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
   }
 
   if (!store.ready) {
-    return <div className="boot">Abriendo el libro…</div>
+    return <div className="boot">Cargando</div>
   }
 
   if (store.needsAuth) return <AuthScreen />
@@ -173,8 +190,10 @@ function Shell({ onLogout }: { onLogout: () => void }) {
             onChange={(event) => {
               const next = Number(event.target.value)
               setYear(next)
-              const months = store.ensureYear(next)
               const today = new Date()
+              const months = (next === today.getFullYear() ? store.ensureYear(next) : store.db.periods.filter((period) => period.year === next)).filter((period) =>
+                periodIsListed(store.db, period, today),
+              )
               const match =
                 (next === today.getFullYear() ? months.find((period) => period.coveredMonth === today.getMonth()) : null) ??
                 months.find((period) => period.coveredMonth === 0) ??

@@ -23,6 +23,9 @@ export interface Template {
   description: string
   amount: number
   sortOrder: number
+  startYear?: number | null
+  startMonth?: number | null
+  months?: number | null
 }
 
 export interface Entry {
@@ -51,6 +54,14 @@ export interface Debt {
   categoryId: string | null
   startYear: number
   startMonth: number
+  months?: number | null
+}
+
+export interface Projection {
+  fromYear: number
+  fromMonth: number
+  toYear: number
+  toMonth: number
 }
 
 export interface DB {
@@ -59,6 +70,7 @@ export interface DB {
   entries: Entry[]
   templates: Template[]
   debts: Debt[]
+  projection?: Projection
 }
 
 export interface Stats {
@@ -126,12 +138,67 @@ export function categoriesOf(db: DB, kind: Kind): Category[] {
   return db.categories.filter((c) => c.kind === kind).sort((a, b) => a.sortOrder - b.sortOrder)
 }
 
+export function periodHasArrived(period: { year: number; coveredMonth: number }, today = new Date()) {
+  if (period.year < today.getFullYear()) return true
+  if (period.year > today.getFullYear()) return false
+  return period.coveredMonth <= today.getMonth()
+}
+
+export function debtHorizon(db: DB): number | null {
+  let last: number | null = null
+  for (const debt of db.debts ?? []) {
+    const start = debt.startYear * 12 + debt.startMonth
+    let end = start
+    if (typeof debt.months === 'number' && debt.months > 0) end = start + Math.min(36, debt.months) - 1
+    else {
+      for (const entry of db.entries) {
+        if (entry.debtId !== debt.id || entry.advance) continue
+        const period = db.periods.find((item) => item.id === entry.periodId)
+        if (!period) continue
+        end = Math.max(end, period.year * 12 + period.coveredMonth)
+      }
+    }
+    last = last == null ? end : Math.max(last, end)
+  }
+  return last
+}
+
+export function periodIsListed(db: DB, period: Period, today = new Date()) {
+  const at = period.year * 12 + period.coveredMonth
+  const horizon = debtHorizon(db)
+  const window = db.projection
+  if (window) {
+    const from = window.fromYear * 12 + window.fromMonth
+    const to = Math.max(window.toYear * 12 + window.toMonth, horizon ?? 0)
+    return at >= from && at <= to
+  }
+  if (periodHasArrived(period, today)) return true
+  if (horizon != null && at <= horizon) return true
+  if (db.entries.some((entry) => entry.periodId === period.id && entry.debtId)) return true
+  return db.templates.some(
+    (template) =>
+      template.startYear != null &&
+      template.startMonth != null &&
+      template.months != null &&
+      template.months >= 1 &&
+      templateCovers(template, period.year, period.coveredMonth),
+  )
+}
+
 export function templatesOf(db: DB, kind: Kind): Template[] {
   return db.templates.filter((t) => t.kind === kind).sort((a, b) => a.sortOrder - b.sortOrder)
 }
 
-export function instantiateTemplates(periodId: string, templates: Template[]): Entry[] {
-  return templates.map((template) => ({
+export function templateCovers(template: Template, year: number, month: number) {
+  if (template.startYear == null || template.startMonth == null || template.months == null || template.months < 1) return true
+  const start = template.startYear * 12 + template.startMonth
+  const at = year * 12 + month
+  return at >= start && at < start + template.months
+}
+
+export function instantiateTemplates(periodId: string, templates: Template[], when?: { year: number; month: number }): Entry[] {
+  const list = when ? templates.filter((template) => templateCovers(template, when.year, when.month)) : templates
+  return list.map((template) => ({
     id: uid(),
     periodId,
     categoryId: template.categoryId,
@@ -148,6 +215,20 @@ export function instantiateTemplates(periodId: string, templates: Template[]): E
     debtId: null,
     advance: false,
   }))
+}
+
+export function planSpan(total: number, cuota: number, months: number): number[] {
+  const count = Math.max(1, Math.min(36, Math.round(months) || 1))
+  const step = Math.max(0, Math.round(cuota))
+  let left = Math.round(total)
+  if (left <= 0) return []
+  const amounts: number[] = []
+  for (let index = 0; index < count && left > 0; index += 1) {
+    const pay = index === count - 1 ? left : Math.min(step || left, left)
+    amounts.push(pay)
+    left -= pay
+  }
+  return amounts
 }
 
 export function planDebt(total: number, cuota: number): number[] {

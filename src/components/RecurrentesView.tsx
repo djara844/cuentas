@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import type { Kind } from '../types'
-import { KINDS, categoriesOf, templatesOf } from '../types'
+import type { Entry, Kind, Period, Template } from '../types'
+import { KINDS, MONTHS, categoriesOf, templatesOf } from '../types'
 import { useStore } from '../store'
 import { MoneyField } from './Fields'
 
@@ -27,11 +27,16 @@ function TemplateColumn({ kind, label }: { kind: Kind; label: string }) {
   const store = useStore()
   const templates = templatesOf(store.db, kind)
   const categories = categoriesOf(store.db, kind)
+  const periods = [...store.db.periods].sort((a, b) => a.sortOrder - b.sortOrder)
+  const today = new Date()
+  const todayPeriod = periods.find((period) => period.year === today.getFullYear() && period.coveredMonth === today.getMonth()) ?? periods[0]
   const [open, setOpen] = useState(false)
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState('')
   const [amount, setAmount] = useState(0)
   const [categoryId, setCategoryId] = useState(categories[0]?.id ?? '')
+  const [startId, setStartId] = useState(todayPeriod?.id ?? '')
+  const [months, setMonths] = useState(12)
 
   function toggle() {
     setOpen((current) => !current)
@@ -74,6 +79,18 @@ function TemplateColumn({ kind, label }: { kind: Kind; label: string }) {
                     </option>
                   ))}
                 </select>
+                {kind === 'gasto' && (
+                  <TemplateSpan
+                    periods={periods}
+                    startId={templateSpan(template, periods, store.db.entries).startId}
+                    months={templateSpan(template, periods, store.db.entries).months}
+                    onChange={(nextStart, nextMonths) => {
+                      const period = periods.find((item) => item.id === nextStart)
+                      if (!period) return
+                      store.updateTemplate(template.id, { startYear: period.year, startMonth: period.coveredMonth, months: nextMonths })
+                    }}
+                  />
+                )}
                 <div className="recur-actions">
                   <button type="button" className="btn" onClick={() => store.applyTemplateAmount(template.id)}>
                     Poner este valor en todos
@@ -101,7 +118,19 @@ function TemplateColumn({ kind, label }: { kind: Kind; label: string }) {
             onSubmit={(event) => {
               event.preventDefault()
               if (!name.trim() || !categoryId) return
-              store.addTemplate({ kind, description: name.trim(), amount, categoryId })
+              store.addTemplate({
+                kind,
+                description: name.trim(),
+                amount,
+                categoryId,
+                ...(kind === 'gasto' && startId
+                  ? {
+                      startYear: periods.find((period) => period.id === startId)?.year,
+                      startMonth: periods.find((period) => period.id === startId)?.coveredMonth,
+                      months,
+                    }
+                  : {}),
+              })
               setName('')
               setAmount(0)
               setCreating(false)
@@ -119,12 +148,23 @@ function TemplateColumn({ kind, label }: { kind: Kind; label: string }) {
                 </option>
               ))}
             </select>
+            {kind === 'gasto' && (
+              <TemplateSpan
+                periods={periods}
+                startId={startId}
+                months={months}
+                onChange={(nextStart, nextMonths) => {
+                  setStartId(nextStart)
+                  setMonths(nextMonths)
+                }}
+              />
+            )}
             <div className="form-actions">
               <button className="btn" type="button" onClick={() => setCreating(false)}>
                 Cancelar
               </button>
               <button className="btn primary" type="submit">
-                Agregar a todos los meses
+                {kind === 'gasto' ? 'Agregar' : 'Agregar a todos los meses'}
               </button>
             </div>
           </form>
@@ -134,5 +174,61 @@ function TemplateColumn({ kind, label }: { kind: Kind; label: string }) {
           </button>
         ))}
     </section>
+  )
+}
+
+function templateSpan(template: Template, periods: Period[], entries: Entry[]) {
+  if (template.startYear != null && template.startMonth != null && template.months) {
+    const start = periods.find((period) => period.year === template.startYear && period.coveredMonth === template.startMonth) ?? periods[0]
+    return { startId: start?.id ?? '', months: template.months }
+  }
+  const linked = entries
+    .filter((entry) => entry.templateId === template.id)
+    .map((entry) => periods.find((period) => period.id === entry.periodId))
+    .filter((period): period is Period => Boolean(period))
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+  const start = linked[0] ?? periods[0]
+  const end = linked[linked.length - 1] ?? periods[periods.length - 1]
+  const months = start && end ? Math.max(1, end.year * 12 + end.coveredMonth - (start.year * 12 + start.coveredMonth) + 1) : 1
+  return { startId: start?.id ?? '', months }
+}
+
+function TemplateSpan({
+  periods,
+  startId,
+  months,
+  onChange,
+}: {
+  periods: Period[]
+  startId: string
+  months: number
+  onChange: (startId: string, months: number) => void
+}) {
+  const selected = periods.find((period) => period.id === startId) ?? periods[0]
+  return (
+    <div className="span-row">
+      <label className="field">
+        Desde
+        <select aria-label="Desde" value={selected?.id ?? ''} onChange={(event) => onChange(event.target.value, months)}>
+          {periods.map((period) => (
+            <option key={period.id} value={period.id}>
+              {MONTHS[period.coveredMonth]} {period.year}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        Meses
+        <input
+          aria-label="Meses"
+          type="number"
+          min={1}
+          max={36}
+          inputMode="numeric"
+          value={months}
+          onChange={(event) => onChange(selected?.id ?? '', Math.max(1, Math.min(36, Number(event.target.value) || 1)))}
+        />
+      </label>
+    </div>
   )
 }

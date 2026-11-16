@@ -1,6 +1,12 @@
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin } from 'vite'
 import { neon, type NeonQueryFunction } from '@neondatabase/serverless'
+
+const DIEGO_HASH = '432794f4082433f548d2f101b2bdd04bbaa82b4fbe2001d3b53881dc5832d4a3'
+const MONTHS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+const DIEGO_MODULES = ['cuentas', 'pendientes', 'calendario', 'ajustes']
+const CUENTAS_ONLY = ['cuentas']
 
 type Sql = NeonQueryFunction<false, false>
 
@@ -45,6 +51,23 @@ function ensure(sql: Sql) {
       message text not null,
       detail jsonb
     )`
+    await sql`create table if not exists users (
+      name text primary key,
+      pass_hash text not null,
+      ledger_id text not null unique,
+      created_at timestamptz not null default now(),
+      modules jsonb not null default '["cuentas"]'::jsonb
+    )`
+    await sql`alter table users add column if not exists modules jsonb not null default '["cuentas"]'::jsonb`
+    await sql`insert into users (name, pass_hash, ledger_id, modules)
+      values ('diego', ${DIEGO_HASH}, 'main', ${JSON.stringify(DIEGO_MODULES)}::jsonb)
+      on conflict (name) do update set ledger_id = 'main', modules = excluded.modules`
+    await sql`create table if not exists sessions (
+      token text primary key,
+      user_name text not null,
+      ledger_id text not null,
+      created_at timestamptz not null default now()
+    )`
   })().catch((err: unknown) => {
     ready = null
     throw err
@@ -57,8 +80,39 @@ async function writeLog(sql: Sql, level: string, action: string, message: string
     await sql`insert into logs (level, action, message, detail)
       values (${level}, ${action}, ${message}, ${detail == null ? null : JSON.stringify(detail)}::jsonb)`
   } catch {
-    /* un fallo del log no puede borrar el guardado del libro */
+    /* un fallo del log no puede borrar el guardado */
   }
+}
+
+function hashPassword(password: string) {
+  return createHash('sha256').update(password).digest('hex')
+}
+
+function cleanName(value: unknown) {
+  return String(value ?? '').trim().toLowerCase().replace(/\s+/g, '')
+}
+
+function emptyBook() {
+  const periods = []
+  for (const year of [2026, 2027]) {
+    for (let month = 0; month < 12; month += 1) {
+      const prev = new Date(year, month, 0)
+      periods.push({
+        id: randomUUID(),
+        label: `${MONTHS[prev.getMonth()]} ${prev.getDate()} - ${MONTHS[month]}`,
+        year,
+        coveredMonth: month,
+        sortOrder: year * 100 + month,
+      })
+    }
+  }
+  return { categories: [], periods, entries: [], templates: [], debts: [] }
+}
+
+function bearer(req: IncomingMessage) {
+  const header = req.headers.authorization ?? ''
+  const match = /^Bearer\s+(.+)$/i.exec(Array.isArray(header) ? header[0] : header)
+  return match?.[1]?.trim() ?? ''
 }
 
 export function ledgerApi(databaseUrl: string | undefined): Plugin {
@@ -67,7 +121,7 @@ export function ledgerApi(databaseUrl: string | undefined): Plugin {
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         const path = req.url?.split('?')[0]
-        if (path !== '/api/ledger' && path !== '/api/logs') {
+        if (path !== '/api/ledger' && path !== '/api/logs' && path !== '/api/auth/login' && path !== '/api/auth/register') {
           next()
           return
         }
@@ -75,6 +129,12 @@ export function ledgerApi(databaseUrl: string | undefined): Plugin {
       })
     },
   }
+}
+
+function moduleList(value: unknown, user: string) {
+  const list = Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+  if (user === 'diego') return DIEGO_MODULES
+  return list.length ? list : CUENTAS_ONLY
 }
 
 async function handle(databaseUrl: string | undefined, path: string, req: IncomingMessage, res: ServerResponse) {
@@ -87,6 +147,105 @@ async function handle(databaseUrl: string | undefined, path: string, req: Incomi
   const sql = neon(databaseUrl)
   try {
     await ensure(sql)
+    if (path === '/api/auth/login' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req)) as { user?: unknown; password?: unknown }
+      const name = cleanName(body.user)
+      const password = String(body.password ?? '')
+      const hash = hashPassword(password)
+      let ledgerId = ''
+      let modules: string[] = []
+      const found = await sql`select ledger_id, pass_hash, modules from users where name = ${name}`
+      if (found[0] && found[0].pass_hash === hash) {
+        ledgerId = String(found[0].ledger_id)
+        modules = moduleList(found[0].modules, name)
+      } else if (name === 'diego' && hash === DIEGO_HASH) {
+        ledgerId = 'main'
+        modules = DIEGO_MODULES
+      }
+      if (!ledgerId || (ledgerId === 'main' && name !== 'diego')) {
+        res.statusCode = 401
+        res.setHeader('content-type', 'application/json')
+        res.end('{"error":"Usuario o contraseña incorrectos."}')
+        return
+      }
+      const token = randomBytes(24).toString('hex')
+      await sql`insert into sessions (token, user_name, ledger_id) values (${token}, ${name}, ${ledgerId})`
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ token, user: name, ledgerId, modules }))
+      return
+    }
+    if (path === '/api/auth/register' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req)) as { user?: unknown; password?: unknown }
+      const name = cleanName(body.user)
+      const password = String(body.password ?? '')
+      if (name.length < 2 || password.length < 4) {
+        res.statusCode = 400
+        res.setHeader('content-type', 'application/json')
+        res.end('{"error":"Escribe un usuario y una contraseña."}')
+        return
+      }
+      if (name === 'diego') {
+        res.statusCode = 409
+        res.setHeader('content-type', 'application/json')
+        res.end('{"error":"Ese usuario ya existe."}')
+        return
+      }
+      const taken = await sql`select name from users where name = ${name}`
+      if (taken.length) {
+        res.statusCode = 409
+        res.setHeader('content-type', 'application/json')
+        res.end('{"error":"Ese usuario ya existe."}')
+        return
+      }
+      const ledgerId = `u-${randomUUID()}`
+      const book = emptyBook()
+      const modules = CUENTAS_ONLY
+      await sql`insert into users (name, pass_hash, ledger_id, modules) values (${name}, ${hashPassword(password)}, ${ledgerId}, ${JSON.stringify(modules)}::jsonb)`
+      await sql`insert into ledger (id, data, updated_at) values (${ledgerId}, ${JSON.stringify(book)}::jsonb, now())`
+      const token = randomBytes(24).toString('hex')
+      await sql`insert into sessions (token, user_name, ledger_id) values (${token}, ${name}, ${ledgerId})`
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ token, user: name, ledgerId, modules }))
+      return
+    }
+    if ((path === '/api/ledger') && (req.method === 'GET' || req.method === 'PUT' || req.method === 'POST')) {
+      const token = bearer(req)
+      const session = token ? await sql`select user_name, ledger_id from sessions where token = ${token}` : []
+      const ledgerId = session[0] ? String(session[0].ledger_id) : ''
+      if (!ledgerId || (ledgerId === 'main' && String(session[0]?.user_name) !== 'diego')) {
+        res.statusCode = 401
+        res.setHeader('content-type', 'application/json')
+        res.end('{"error":"Entra de nuevo."}')
+        return
+      }
+      if (req.method === 'GET') {
+        const rows = await sql`select data, updated_at from ledger where id = ${ledgerId}`
+        const data = rows[0]?.data ?? null
+        const updatedAt = rows[0]?.updated_at ?? null
+        if (isLedger(data)) await writeLog(sql, 'info', 'cargar', 'Datos leídos', counts(data))
+        else await writeLog(sql, 'info', 'cargar', 'Base de datos vacía', null)
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify({ data, updatedAt }))
+        return
+      }
+      const parsed = JSON.parse(await readBody(req)) as unknown
+      if (!isLedger(parsed)) {
+        await writeLog(sql, 'error', 'guardar', 'Se rechazaron datos inválidos', null)
+        res.statusCode = 400
+        res.setHeader('content-type', 'application/json')
+        res.end('{"error":"datos inválidos"}')
+        return
+      }
+      const detail = counts(parsed)
+      const saved = await sql`insert into ledger (id, data, updated_at)
+        values (${ledgerId}, ${JSON.stringify(parsed)}::jsonb, now())
+        on conflict (id) do update set data = excluded.data, updated_at = now()
+        returning updated_at`
+      await writeLog(sql, 'info', 'guardar', 'Datos guardados', detail)
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ ok: true, updatedAt: saved[0]?.updated_at ?? null }))
+      return
+    }
     if (path === '/api/logs' && req.method === 'GET') {
       const rows = await sql`select id, at, level, action, message, detail from logs order by id desc limit 50`
       res.setHeader('content-type', 'application/json')
@@ -98,35 +257,6 @@ async function handle(databaseUrl: string | undefined, path: string, req: Incomi
       await writeLog(sql, body.level || 'info', body.action || 'cliente', body.message || '', body.detail ?? null)
       res.setHeader('content-type', 'application/json')
       res.end('{"ok":true}')
-      return
-    }
-    if (path === '/api/ledger' && req.method === 'GET') {
-      const rows = await sql`select data, updated_at from ledger where id = 'main'`
-      const data = rows[0]?.data ?? null
-      const updatedAt = rows[0]?.updated_at ?? null
-      if (isLedger(data)) await writeLog(sql, 'info', 'cargar', 'Libro leído', counts(data))
-      else await writeLog(sql, 'info', 'cargar', 'Libro vacío', null)
-      res.setHeader('content-type', 'application/json')
-      res.end(JSON.stringify({ data, updatedAt }))
-      return
-    }
-    if (path === '/api/ledger' && (req.method === 'PUT' || req.method === 'POST')) {
-      const parsed = JSON.parse(await readBody(req)) as unknown
-      if (!isLedger(parsed)) {
-        await writeLog(sql, 'error', 'guardar', 'Se rechazó un libro inválido', null)
-        res.statusCode = 400
-        res.setHeader('content-type', 'application/json')
-        res.end('{"error":"libro inválido"}')
-        return
-      }
-      const detail = counts(parsed)
-      const saved = await sql`insert into ledger (id, data, updated_at)
-        values ('main', ${JSON.stringify(parsed)}::jsonb, now())
-        on conflict (id) do update set data = excluded.data, updated_at = now()
-        returning updated_at`
-      await writeLog(sql, 'info', 'guardar', 'Libro guardado', detail)
-      res.setHeader('content-type', 'application/json')
-      res.end(JSON.stringify({ ok: true, updatedAt: saved[0]?.updated_at ?? null }))
       return
     }
     res.statusCode = 405

@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { MONTHS, periodStats, type Kind } from '../types'
+import { MONTHS, periodHasArrived, periodIsListed, periodStats, type Kind } from '../types'
 import { formatCOP } from '../money'
 import { useStore } from '../store'
 import { Fold } from './Fold'
@@ -7,7 +7,10 @@ import { Fold } from './Fold'
 export function ReportsView({ year }: { year: number }) {
   const store = useStore()
   const report = useMemo(() => {
-    const periods = store.db.periods.filter((period) => period.year === year).sort((a, b) => a.sortOrder - b.sortOrder)
+    const today = new Date()
+    const periods = store.db.periods
+      .filter((period) => period.year === year && periodHasArrived(period, today) && periodIsListed(store.db, period, today))
+      .sort((a, b) => a.sortOrder - b.sortOrder)
     const rows = periods.map((period) => ({ period, stats: periodStats(store.db, period.id) }))
     const totals = rows.reduce(
       (acc, row) => ({
@@ -76,7 +79,10 @@ export function ReportsView({ year }: { year: number }) {
         <div>
           <p className="kicker">Análisis {year}</p>
           <h1 className="page-title">Gastos</h1>
-          <p className="formula">{report.months} meses con movimiento · comprometido {report.committed}%</p>
+          <p className="formula">
+            {year === new Date().getFullYear() ? `Hasta ${MONTHS[new Date().getMonth()].toLowerCase()} · ` : ''}
+            {report.months} meses · comprometido {report.committed}%
+          </p>
         </div>
       </header>
 
