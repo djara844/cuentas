@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { readBoard, writeBoard } from './cloudLedger'
 import { queueDayAlerts } from './reminders'
 import { uid } from './types'
 
@@ -190,16 +191,42 @@ function placeVarios(board: Board): Board {
   return { ...board, categories }
 }
 
+function remember(board: Board) {
+  localStorage.setItem(KEY, JSON.stringify(board))
+  void writeBoard(board)
+  queueDayAlerts()
+}
+
+function normalizeBoard(board: Board): Board {
+  return placeVarios(separateColors(isBoard(board) ? adoptCategories(lockColumns(board)) : seedBoard()))
+}
+
 export function useBoard() {
   const [board, setBoard] = useState<Board>(loadBoard)
+  const live = useRef(board)
+  live.current = board
 
   useEffect(() => {
-    localStorage.setItem(KEY, JSON.stringify(board))
-    queueDayAlerts()
-  }, [board])
+    let cancel = false
+    void (async () => {
+      const remote = await readBoard()
+      if (cancel) return
+      const local = live.current
+      const next = remote && remote.cards.length > local.cards.length ? normalizeBoard(remote) : normalizeBoard(local)
+      remember(next)
+      setBoard(next)
+    })()
+    return () => {
+      cancel = true
+    }
+  }, [])
 
   function patch(recipe: (current: Board) => Board) {
-    setBoard((current) => placeVarios(lockColumns(recipe(current))))
+    setBoard((current) => {
+      const next = placeVarios(lockColumns(recipe(current)))
+      remember(next)
+      return next
+    })
   }
 
   return {

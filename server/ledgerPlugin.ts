@@ -68,6 +68,16 @@ function ensure(sql: Sql) {
       ledger_id text not null,
       created_at timestamptz not null default now()
     )`
+    await sql`create table if not exists boards (
+      ledger_id text primary key,
+      data jsonb not null,
+      updated_at timestamptz not null default now()
+    )`
+    await sql`create table if not exists vaults (
+      ledger_id text primary key,
+      data jsonb not null,
+      updated_at timestamptz not null default now()
+    )`
   })().catch((err: unknown) => {
     ready = null
     throw err
@@ -109,6 +119,26 @@ function emptyBook() {
   return { categories: [], periods, entries: [], templates: [], debts: [] }
 }
 
+function isBoard(value: unknown): value is { categories: unknown[]; columns: unknown[]; cards: unknown[] } {
+  if (!value || typeof value !== 'object') return false
+  const row = value as { categories?: unknown; columns?: unknown; cards?: unknown }
+  return Array.isArray(row.categories) && Array.isArray(row.columns) && Array.isArray(row.cards)
+}
+
+function isVault(value: unknown): value is { extra: unknown[]; overrides: Record<string, unknown> } {
+  if (!value || typeof value !== 'object') return false
+  const row = value as { extra?: unknown; overrides?: unknown }
+  return Array.isArray(row.extra) && !!row.overrides && typeof row.overrides === 'object'
+}
+
+async function sessionLedger(sql: Sql, req: IncomingMessage) {
+  const token = bearer(req)
+  const session = token ? await sql`select user_name, ledger_id from sessions where token = ${token}` : []
+  const ledgerId = session[0] ? String(session[0].ledger_id) : ''
+  if (!ledgerId || (ledgerId === 'main' && String(session[0]?.user_name) !== 'diego')) return ''
+  return ledgerId
+}
+
 function bearer(req: IncomingMessage) {
   const header = req.headers.authorization ?? ''
   const match = /^Bearer\s+(.+)$/i.exec(Array.isArray(header) ? header[0] : header)
@@ -121,7 +151,7 @@ export function ledgerApi(databaseUrl: string | undefined): Plugin {
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         const path = req.url?.split('?')[0]
-        if (path !== '/api/ledger' && path !== '/api/logs' && path !== '/api/auth/login' && path !== '/api/auth/register') {
+        if (path !== '/api/ledger' && path !== '/api/board' && path !== '/api/vault' && path !== '/api/logs' && path !== '/api/auth/login' && path !== '/api/auth/register') {
           next()
           return
         }
@@ -206,6 +236,66 @@ async function handle(databaseUrl: string | undefined, path: string, req: Incomi
       await sql`insert into sessions (token, user_name, ledger_id) values (${token}, ${name}, ${ledgerId})`
       res.setHeader('content-type', 'application/json')
       res.end(JSON.stringify({ token, user: name, ledgerId, modules }))
+      return
+    }
+    if (path === '/api/board' && (req.method === 'GET' || req.method === 'PUT')) {
+      const ledgerId = await sessionLedger(sql, req)
+      if (!ledgerId) {
+        res.statusCode = 401
+        res.setHeader('content-type', 'application/json')
+        res.end('{"error":"Entra de nuevo."}')
+        return
+      }
+      if (req.method === 'GET') {
+        const rows = await sql`select data, updated_at from boards where ledger_id = ${ledgerId}`
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify({ data: rows[0]?.data ?? null, updatedAt: rows[0]?.updated_at ?? null }))
+        return
+      }
+      const parsed = JSON.parse(await readBody(req)) as unknown
+      if (!isBoard(parsed)) {
+        res.statusCode = 400
+        res.setHeader('content-type', 'application/json')
+        res.end('{"error":"datos inválidos"}')
+        return
+      }
+      const saved = await sql`insert into boards (ledger_id, data, updated_at)
+        values (${ledgerId}, ${JSON.stringify(parsed)}::jsonb, now())
+        on conflict (ledger_id) do update set data = excluded.data, updated_at = now()
+        returning updated_at`
+      await writeLog(sql, 'info', 'guardar', 'Pendientes guardados', { cards: parsed.cards.length })
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ ok: true, updatedAt: saved[0]?.updated_at ?? null }))
+      return
+    }
+    if (path === '/api/vault' && (req.method === 'GET' || req.method === 'PUT')) {
+      const ledgerId = await sessionLedger(sql, req)
+      if (!ledgerId) {
+        res.statusCode = 401
+        res.setHeader('content-type', 'application/json')
+        res.end('{"error":"Entra de nuevo."}')
+        return
+      }
+      if (req.method === 'GET') {
+        const rows = await sql`select data, updated_at from vaults where ledger_id = ${ledgerId}`
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify({ data: rows[0]?.data ?? null, updatedAt: rows[0]?.updated_at ?? null }))
+        return
+      }
+      const parsed = JSON.parse(await readBody(req)) as unknown
+      if (!isVault(parsed)) {
+        res.statusCode = 400
+        res.setHeader('content-type', 'application/json')
+        res.end('{"error":"datos inválidos"}')
+        return
+      }
+      const saved = await sql`insert into vaults (ledger_id, data, updated_at)
+        values (${ledgerId}, ${JSON.stringify(parsed)}::jsonb, now())
+        on conflict (ledger_id) do update set data = excluded.data, updated_at = now()
+        returning updated_at`
+      await writeLog(sql, 'info', 'guardar', 'Registro guardado', { extra: parsed.extra.length })
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ ok: true, updatedAt: saved[0]?.updated_at ?? null }))
       return
     }
     if ((path === '/api/ledger') && (req.method === 'GET' || req.method === 'PUT' || req.method === 'POST')) {

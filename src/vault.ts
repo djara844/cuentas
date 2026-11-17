@@ -1,3 +1,5 @@
+import { readVault, writeVault } from './cloudLedger'
+
 export interface Note {
   year: number
   age: number
@@ -63,8 +65,13 @@ export function loadExtra(): Note[] {
   }
 }
 
+function publishVault() {
+  void writeVault({ extra: loadExtra(), overrides: loadOverrides() })
+}
+
 export function saveExtra(notes: Note[]) {
   localStorage.setItem(EXTRA_KEY, JSON.stringify(notes))
+  publishVault()
 }
 
 export function loadOverrides(): Record<string, Note> {
@@ -82,6 +89,19 @@ export function saveOverride(key: string, note: Note) {
   const current = loadOverrides()
   current[key] = note
   localStorage.setItem(OVERRIDE_KEY, JSON.stringify(current))
+  publishVault()
+}
+
+export async function pullVault() {
+  const remote = await readVault()
+  const localExtra = loadExtra()
+  const localOverrides = loadOverrides()
+  const extra = remote && remote.extra.length >= localExtra.length ? remote.extra : localExtra
+  const overrides = remote && Object.keys(remote.overrides).length >= Object.keys(localOverrides).length ? remote.overrides : localOverrides
+  localStorage.setItem(EXTRA_KEY, JSON.stringify(extra))
+  localStorage.setItem(OVERRIDE_KEY, JSON.stringify(overrides))
+  publishVault()
+  return { extra, overrides }
 }
 
 export async function confirmGate(password: string): Promise<boolean> {

@@ -103,6 +103,16 @@ async function directSql() {
       ledger_id text not null,
       created_at timestamptz not null default now()
     )`
+    await sql`create table if not exists boards (
+      ledger_id text primary key,
+      data jsonb not null,
+      updated_at timestamptz not null default now()
+    )`
+    await sql`create table if not exists vaults (
+      ledger_id text primary key,
+      data jsonb not null,
+      updated_at timestamptz not null default now()
+    )`
   })().catch((err: unknown) => {
     tablesReady = null
     throw err
@@ -252,4 +262,140 @@ export async function writeCloud(db: DB): Promise<string | null> {
   } catch {
     return null
   }
+}
+
+export interface RemoteBoard {
+  categories: { id: string; name: string; color: string; sortOrder: number }[]
+  columns: { id: string; name: string; sortOrder: number }[]
+  cards: {
+    id: string
+    columnId: string
+    categoryId: string | null
+    title: string
+    detail: string
+    due: string | null
+    sortOrder: number
+  }[]
+}
+
+export interface RemoteVault {
+  extra: { year: number; age: number; name: string; count: number | null; mark: boolean }[]
+  overrides: Record<string, { year: number; age: number; name: string; count: number | null; mark: boolean }>
+}
+
+function parsedJson(value: unknown) {
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as unknown
+    } catch {
+      return null
+    }
+  }
+  return value
+}
+
+function isRemoteBoard(value: unknown): value is RemoteBoard {
+  if (!value || typeof value !== 'object') return false
+  const board = value as RemoteBoard
+  return Array.isArray(board.categories) && Array.isArray(board.columns) && Array.isArray(board.cards)
+}
+
+function isRemoteVault(value: unknown): value is RemoteVault {
+  if (!value || typeof value !== 'object') return false
+  const row = value as RemoteVault
+  return Array.isArray(row.extra) && !!row.overrides && typeof row.overrides === 'object'
+}
+
+export async function readBoard(): Promise<RemoteBoard | null> {
+  try {
+    if (Capacitor.isNativePlatform()) return await readBoardDirect()
+    const res = await fetch('/api/board', { headers: { accept: 'application/json', ...authHeader() } })
+    if (!res.ok) return null
+    const body = (await res.json()) as { data?: unknown }
+    const data = parsedJson(body.data)
+    return isRemoteBoard(data) ? data : null
+  } catch {
+    return null
+  }
+}
+
+export async function writeBoard(board: RemoteBoard): Promise<boolean> {
+  try {
+    if (Capacitor.isNativePlatform()) return await writeBoardDirect(board)
+    const res = await fetch('/api/board', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', ...authHeader() },
+      body: JSON.stringify(board),
+      keepalive: true,
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+export async function readVault(): Promise<RemoteVault | null> {
+  try {
+    if (Capacitor.isNativePlatform()) return await readVaultDirect()
+    const res = await fetch('/api/vault', { headers: { accept: 'application/json', ...authHeader() } })
+    if (!res.ok) return null
+    const body = (await res.json()) as { data?: unknown }
+    const data = parsedJson(body.data)
+    return isRemoteVault(data) ? data : null
+  } catch {
+    return null
+  }
+}
+
+export async function writeVault(vault: RemoteVault): Promise<boolean> {
+  try {
+    if (Capacitor.isNativePlatform()) return await writeVaultDirect(vault)
+    const res = await fetch('/api/vault', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', ...authHeader() },
+      body: JSON.stringify(vault),
+      keepalive: true,
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+async function readBoardDirect() {
+  const sql = await directSql()
+  const id = ownLedger()
+  if (!sql || !id) return null
+  const rows = await sql`select data from boards where ledger_id = ${id}`
+  const data = parsedJson(rows[0]?.data)
+  return isRemoteBoard(data) ? data : null
+}
+
+async function writeBoardDirect(board: RemoteBoard) {
+  const sql = await directSql()
+  const id = ownLedger()
+  if (!sql || !id) return false
+  await sql`insert into boards (ledger_id, data, updated_at)
+    values (${id}, ${JSON.stringify(board)}::jsonb, now())
+    on conflict (ledger_id) do update set data = excluded.data, updated_at = now()`
+  return true
+}
+
+async function readVaultDirect() {
+  const sql = await directSql()
+  const id = ownLedger()
+  if (!sql || !id) return null
+  const rows = await sql`select data from vaults where ledger_id = ${id}`
+  const data = parsedJson(rows[0]?.data)
+  return isRemoteVault(data) ? data : null
+}
+
+async function writeVaultDirect(vault: RemoteVault) {
+  const sql = await directSql()
+  const id = ownLedger()
+  if (!sql || !id) return false
+  await sql`insert into vaults (ledger_id, data, updated_at)
+    values (${id}, ${JSON.stringify(vault)}::jsonb, now())
+    on conflict (ledger_id) do update set data = excluded.data, updated_at = now()`
+  return true
 }

@@ -1,6 +1,6 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { go } from '../route'
-import { NOTES, confirmGate, loadExtra, loadOverrides, noteReport, saveExtra, saveOverride, type Note } from '../vault'
+import { NOTES, confirmGate, loadExtra, loadOverrides, noteReport, pullVault, saveExtra, saveOverride, type Note } from '../vault'
 import { Fold } from './Fold'
 
 export function VaultView() {
@@ -63,6 +63,12 @@ export function VaultView() {
 function Record() {
   const [extra, setExtra] = useState<Note[]>(loadExtra)
   const [overrides, setOverrides] = useState<Record<string, Note>>(loadOverrides)
+  useEffect(() => {
+    void pullVault().then((next) => {
+      setExtra(next.extra)
+      setOverrides(next.overrides)
+    })
+  }, [])
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<{ key: string; extraIndex: number | null; note: Note } | null>(null)
   const rows = useMemo(
@@ -96,7 +102,7 @@ function Record() {
         </button>
         <div className="brand">
           <span>Registro</span>
-          <small>Solo en este teléfono</small>
+          <small>En la base de datos</small>
         </div>
         <button className={adding ? 'icon-btn plus on' : 'icon-btn plus'} type="button" aria-label="Agregar" onClick={() => setAdding((current) => !current)}>
           <svg viewBox="0 0 24 24" aria-hidden="true">
