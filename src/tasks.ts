@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { isDiego, ledgerId } from './authStore'
 import { readBoard, writeBoard } from './cloudLedger'
 import { queueDayAlerts } from './reminders'
 import { uid } from './types'
@@ -155,9 +156,14 @@ function separateColors(board: Board): Board {
   return { ...board, categories }
 }
 
+function boardKey() {
+  const id = ledgerId()
+  return id ? `${KEY}:${id}` : KEY
+}
+
 function loadBoard(): Board {
   try {
-    const raw = localStorage.getItem(KEY)
+    const raw = localStorage.getItem(boardKey()) || (isDiego() ? localStorage.getItem(KEY) : null)
     if (!raw) return placeVarios(separateColors(seedBoard()))
     const parsed = JSON.parse(raw) as unknown
     return placeVarios(separateColors(isBoard(parsed) ? adoptCategories(lockColumns(parsed)) : seedBoard()))
@@ -192,9 +198,10 @@ function placeVarios(board: Board): Board {
 }
 
 function remember(board: Board) {
-  localStorage.setItem(KEY, JSON.stringify(board))
-  void writeBoard(board)
-  queueDayAlerts()
+  void writeBoard(board).then((ok) => {
+    if (ok) localStorage.setItem(boardKey(), JSON.stringify(board))
+    queueDayAlerts()
+  })
 }
 
 function normalizeBoard(board: Board): Board {
@@ -209,12 +216,14 @@ export function useBoard() {
   useEffect(() => {
     let cancel = false
     void (async () => {
+      if (!isDiego()) return
       const remote = await readBoard()
       if (cancel) return
       const local = live.current
-      const next = remote && remote.cards.length > local.cards.length ? normalizeBoard(remote) : normalizeBoard(local)
-      remember(next)
-      setBoard(next)
+      const remoteHas = !!remote && (remote.cards.length > 0 || local.cards.length === 0)
+      const next = normalizeBoard(remoteHas && remote ? remote : local)
+      if (!remoteHas && local.cards.length > 0) await writeBoard(next)
+      if (!cancel) setBoard(next)
     })()
     return () => {
       cancel = true

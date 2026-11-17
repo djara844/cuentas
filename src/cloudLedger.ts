@@ -166,6 +166,10 @@ function ownLedger() {
   return id.startsWith('u-') ? id : ''
 }
 
+function diegoLedger() {
+  return isDiego() ? ownLedger() : ''
+}
+
 async function sha256(text: string) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
@@ -192,10 +196,8 @@ function cleanName(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, '')
 }
 
-function moduleList(value: unknown, user: string) {
-  const list = Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
-  if (user === 'diego') return DIEGO_MODULES
-  return list.length ? list : CUENTAS_ONLY
+function moduleList(_value: unknown, user: string) {
+  return user === 'diego' ? DIEGO_MODULES : CUENTAS_ONLY
 }
 
 export async function signAccount(
@@ -236,6 +238,9 @@ export async function signAccount(
   if (found[0] && found[0].pass_hash === hash) {
     id = String(found[0].ledger_id)
     modules = moduleList(found[0].modules, name)
+    if (name !== 'diego') {
+      await sql`update users set modules = ${JSON.stringify(CUENTAS_ONLY)}::jsonb where name = ${name}`
+    }
   } else if (name === 'diego' && hash === DIEGO_HASH) {
     id = 'main'
     modules = DIEGO_MODULES
@@ -281,6 +286,7 @@ export interface RemoteBoard {
 export interface RemoteVault {
   extra: { year: number; age: number; name: string; count: number | null; mark: boolean }[]
   overrides: Record<string, { year: number; age: number; name: string; count: number | null; mark: boolean }>
+  notes?: { year: number; age: number; name: string; count: number | null; mark: boolean }[]
 }
 
 function parsedJson(value: unknown) {
@@ -308,6 +314,7 @@ function isRemoteVault(value: unknown): value is RemoteVault {
 
 export async function readBoard(): Promise<RemoteBoard | null> {
   try {
+    if (!isDiego()) return null
     if (Capacitor.isNativePlatform()) return await readBoardDirect()
     const res = await fetch('/api/board', { headers: { accept: 'application/json', ...authHeader() } })
     if (!res.ok) return null
@@ -321,6 +328,7 @@ export async function readBoard(): Promise<RemoteBoard | null> {
 
 export async function writeBoard(board: RemoteBoard): Promise<boolean> {
   try {
+    if (!isDiego()) return false
     if (Capacitor.isNativePlatform()) return await writeBoardDirect(board)
     const res = await fetch('/api/board', {
       method: 'PUT',
@@ -336,6 +344,7 @@ export async function writeBoard(board: RemoteBoard): Promise<boolean> {
 
 export async function readVault(): Promise<RemoteVault | null> {
   try {
+    if (!isDiego()) return null
     if (Capacitor.isNativePlatform()) return await readVaultDirect()
     const res = await fetch('/api/vault', { headers: { accept: 'application/json', ...authHeader() } })
     if (!res.ok) return null
@@ -349,6 +358,7 @@ export async function readVault(): Promise<RemoteVault | null> {
 
 export async function writeVault(vault: RemoteVault): Promise<boolean> {
   try {
+    if (!isDiego()) return false
     if (Capacitor.isNativePlatform()) return await writeVaultDirect(vault)
     const res = await fetch('/api/vault', {
       method: 'PUT',
@@ -364,7 +374,7 @@ export async function writeVault(vault: RemoteVault): Promise<boolean> {
 
 async function readBoardDirect() {
   const sql = await directSql()
-  const id = ownLedger()
+  const id = diegoLedger()
   if (!sql || !id) return null
   const rows = await sql`select data from boards where ledger_id = ${id}`
   const data = parsedJson(rows[0]?.data)
@@ -373,7 +383,7 @@ async function readBoardDirect() {
 
 async function writeBoardDirect(board: RemoteBoard) {
   const sql = await directSql()
-  const id = ownLedger()
+  const id = diegoLedger()
   if (!sql || !id) return false
   await sql`insert into boards (ledger_id, data, updated_at)
     values (${id}, ${JSON.stringify(board)}::jsonb, now())
@@ -383,7 +393,7 @@ async function writeBoardDirect(board: RemoteBoard) {
 
 async function readVaultDirect() {
   const sql = await directSql()
-  const id = ownLedger()
+  const id = diegoLedger()
   if (!sql || !id) return null
   const rows = await sql`select data from vaults where ledger_id = ${id}`
   const data = parsedJson(rows[0]?.data)
@@ -392,7 +402,7 @@ async function readVaultDirect() {
 
 async function writeVaultDirect(vault: RemoteVault) {
   const sql = await directSql()
-  const id = ownLedger()
+  const id = diegoLedger()
   if (!sql || !id) return false
   await sql`insert into vaults (ledger_id, data, updated_at)
     values (${id}, ${JSON.stringify(vault)}::jsonb, now())

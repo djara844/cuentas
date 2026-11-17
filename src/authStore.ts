@@ -9,10 +9,8 @@ export interface Account {
 
 const DIEGO_MODULES = ['cuentas', 'pendientes', 'calendario', 'ajustes']
 
-function modulesOf(user: string, value: unknown) {
-  const list = Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
-  if (user === 'diego') return DIEGO_MODULES
-  return list.length ? list : ['cuentas']
+function modulesOf(user: string, _value: unknown) {
+  return user === 'diego' ? DIEGO_MODULES : ['cuentas']
 }
 
 function read(): Account | null {

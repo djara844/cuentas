@@ -131,12 +131,12 @@ function isVault(value: unknown): value is { extra: unknown[]; overrides: Record
   return Array.isArray(row.extra) && !!row.overrides && typeof row.overrides === 'object'
 }
 
-async function sessionLedger(sql: Sql, req: IncomingMessage) {
+async function diegoLedger(sql: Sql, req: IncomingMessage) {
   const token = bearer(req)
   const session = token ? await sql`select user_name, ledger_id from sessions where token = ${token}` : []
-  const ledgerId = session[0] ? String(session[0].ledger_id) : ''
-  if (!ledgerId || (ledgerId === 'main' && String(session[0]?.user_name) !== 'diego')) return ''
-  return ledgerId
+  if (String(session[0]?.user_name) !== 'diego') return ''
+  const ledgerId = String(session[0]?.ledger_id ?? '')
+  return ledgerId === 'main' ? ledgerId : ''
 }
 
 function bearer(req: IncomingMessage) {
@@ -161,10 +161,8 @@ export function ledgerApi(databaseUrl: string | undefined): Plugin {
   }
 }
 
-function moduleList(value: unknown, user: string) {
-  const list = Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
-  if (user === 'diego') return DIEGO_MODULES
-  return list.length ? list : CUENTAS_ONLY
+function moduleList(_value: unknown, user: string) {
+  return user === 'diego' ? DIEGO_MODULES : CUENTAS_ONLY
 }
 
 async function handle(databaseUrl: string | undefined, path: string, req: IncomingMessage, res: ServerResponse) {
@@ -188,6 +186,9 @@ async function handle(databaseUrl: string | undefined, path: string, req: Incomi
       if (found[0] && found[0].pass_hash === hash) {
         ledgerId = String(found[0].ledger_id)
         modules = moduleList(found[0].modules, name)
+        if (name !== 'diego') {
+          await sql`update users set modules = ${JSON.stringify(CUENTAS_ONLY)}::jsonb where name = ${name}`
+        }
       } else if (name === 'diego' && hash === DIEGO_HASH) {
         ledgerId = 'main'
         modules = DIEGO_MODULES
@@ -239,7 +240,7 @@ async function handle(databaseUrl: string | undefined, path: string, req: Incomi
       return
     }
     if (path === '/api/board' && (req.method === 'GET' || req.method === 'PUT')) {
-      const ledgerId = await sessionLedger(sql, req)
+      const ledgerId = await diegoLedger(sql, req)
       if (!ledgerId) {
         res.statusCode = 401
         res.setHeader('content-type', 'application/json')
@@ -269,7 +270,7 @@ async function handle(databaseUrl: string | undefined, path: string, req: Incomi
       return
     }
     if (path === '/api/vault' && (req.method === 'GET' || req.method === 'PUT')) {
-      const ledgerId = await sessionLedger(sql, req)
+      const ledgerId = await diegoLedger(sql, req)
       if (!ledgerId) {
         res.statusCode = 401
         res.setHeader('content-type', 'application/json')

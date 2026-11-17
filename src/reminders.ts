@@ -1,5 +1,6 @@
 import { Capacitor } from '@capacitor/core'
 import { LocalNotifications } from '@capacitor/local-notifications'
+import { isDiego, ledgerId } from './authStore'
 import { formatCOP } from './money'
 import { MONTHS, type DB } from './types'
 
@@ -32,8 +33,10 @@ function loadLedger(): DB | null {
 }
 
 function loadOpenTasks(): TaskCard[] {
+  if (!isDiego()) return []
   try {
-    const raw = localStorage.getItem(TASKS_KEY)
+    const id = ledgerId()
+    const raw = (id && localStorage.getItem(`${TASKS_KEY}:${id}`)) || localStorage.getItem(TASKS_KEY)
     if (!raw) return []
     const board = JSON.parse(raw) as { cards?: TaskCard[]; columns?: TaskColumn[] }
     const done = new Set((board.columns ?? []).filter((column) => column.name.trim().toLowerCase() === 'hecho').map((column) => column.id))

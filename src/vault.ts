@@ -1,4 +1,5 @@
 import { readVault, writeVault } from './cloudLedger'
+import { isDiego, ledgerId } from './authStore'
 
 export interface Note {
   year: number
@@ -53,9 +54,14 @@ const EXTRA_KEY = 'cuentas-registro-extra-v1'
 const OVERRIDE_KEY = 'cuentas-registro-overrides-v1'
 const GATE_HASH = '679fea7a7ddf4783cf51a722e5eaca24976bedb02fdf9dc38dee065e2bdfec3a'
 
-export function loadExtra(): Note[] {
+function scoped(key: string) {
+  const id = ledgerId()
+  return id ? `${key}:${id}` : key
+}
+
+function readList(key: string): Note[] {
   try {
-    const raw = localStorage.getItem(EXTRA_KEY)
+    const raw = localStorage.getItem(scoped(key)) || (isDiego() ? localStorage.getItem(key) : null)
     if (!raw) return []
     const parsed = JSON.parse(raw) as Note[]
     if (!Array.isArray(parsed)) return []
@@ -65,18 +71,23 @@ export function loadExtra(): Note[] {
   }
 }
 
+export function loadExtra(): Note[] {
+  return readList(EXTRA_KEY)
+}
+
 function publishVault() {
-  void writeVault({ extra: loadExtra(), overrides: loadOverrides() })
+  const rows = composeNotes()
+  void writeVault({ extra: rows, overrides: {}, notes: rows })
 }
 
 export function saveExtra(notes: Note[]) {
-  localStorage.setItem(EXTRA_KEY, JSON.stringify(notes))
+  localStorage.setItem(scoped(EXTRA_KEY), JSON.stringify(notes))
   publishVault()
 }
 
-export function loadOverrides(): Record<string, Note> {
+function readMap(key: string): Record<string, Note> {
   try {
-    const raw = localStorage.getItem(OVERRIDE_KEY)
+    const raw = localStorage.getItem(scoped(key)) || (isDiego() ? localStorage.getItem(key) : null)
     if (!raw) return {}
     const parsed = JSON.parse(raw) as Record<string, Note>
     return parsed && typeof parsed === 'object' ? parsed : {}
@@ -85,23 +96,34 @@ export function loadOverrides(): Record<string, Note> {
   }
 }
 
+export function loadOverrides(): Record<string, Note> {
+  return readMap(OVERRIDE_KEY)
+}
+
 export function saveOverride(key: string, note: Note) {
   const current = loadOverrides()
   current[key] = note
-  localStorage.setItem(OVERRIDE_KEY, JSON.stringify(current))
+  localStorage.setItem(scoped(OVERRIDE_KEY), JSON.stringify(current))
   publishVault()
 }
 
-export async function pullVault() {
+function composeNotes(): Note[] {
+  const overrides = loadOverrides()
+  const base = NOTES.map((note, index) => overrides[`base:${index}`] ?? note)
+  return [...base, ...loadExtra()]
+}
+
+export async function loadNotes(): Promise<Note[]> {
+  if (!isDiego()) return []
   const remote = await readVault()
-  const localExtra = loadExtra()
-  const localOverrides = loadOverrides()
-  const extra = remote && remote.extra.length >= localExtra.length ? remote.extra : localExtra
-  const overrides = remote && Object.keys(remote.overrides).length >= Object.keys(localOverrides).length ? remote.overrides : localOverrides
-  localStorage.setItem(EXTRA_KEY, JSON.stringify(extra))
-  localStorage.setItem(OVERRIDE_KEY, JSON.stringify(overrides))
-  publishVault()
-  return { extra, overrides }
+  if (remote?.notes?.length) return remote.notes
+  const rows = composeNotes()
+  await writeVault({ extra: rows, overrides: {}, notes: rows })
+  return rows
+}
+
+export async function saveNotes(notes: Note[]) {
+  await writeVault({ extra: notes, overrides: {}, notes })
 }
 
 export async function confirmGate(password: string): Promise<boolean> {

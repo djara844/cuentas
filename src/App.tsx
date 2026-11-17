@@ -16,6 +16,7 @@ import { PendientesView } from './components/PendientesView'
 import { VaultView } from './components/VaultView'
 import { CalendarView } from './components/CalendarView'
 import { can, isDiego, isLoggedIn, logout } from './session'
+import { loadNotes } from './vault'
 import { queueDayAlerts } from './reminders'
 import { MONTHS } from './types'
 
@@ -82,6 +83,11 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     if (route.view !== 'periodo') return
     document.querySelector('.chip.on')?.scrollIntoView({ inline: 'center', block: 'nearest' })
   }, [route.view, selected?.id, year])
+
+  useEffect(() => {
+    if (!store.ready || store.needsAuth || !isDiego()) return
+    void loadNotes()
+  }, [store.ready, store.needsAuth])
 
   useEffect(() => {
     if (!store.ready) return

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { go } from '../route'
-import { NOTES, confirmGate, loadExtra, loadOverrides, noteReport, pullVault, saveExtra, saveOverride, type Note } from '../vault'
+import { confirmGate, loadNotes, noteReport, saveNotes, type Note } from '../vault'
 import { Fold } from './Fold'
 
 export function VaultView() {
@@ -61,32 +61,23 @@ export function VaultView() {
 }
 
 function Record() {
-  const [extra, setExtra] = useState<Note[]>(loadExtra)
-  const [overrides, setOverrides] = useState<Record<string, Note>>(loadOverrides)
-  useEffect(() => {
-    void pullVault().then((next) => {
-      setExtra(next.extra)
-      setOverrides(next.overrides)
-    })
-  }, [])
+  const [notes, setNotes] = useState<Note[]>([])
   const [adding, setAdding] = useState(false)
-  const [editing, setEditing] = useState<{ key: string; extraIndex: number | null; note: Note } | null>(null)
-  const rows = useMemo(
-    () => [
-      ...NOTES.map((note, index) => ({ key: `base:${index}`, extraIndex: null as number | null, note: overrides[`base:${index}`] ?? note })),
-      ...extra.map((note, index) => ({ key: `extra:${index}`, extraIndex: index, note })),
-    ],
-    [extra, overrides],
-  )
-  const notes = useMemo(() => rows.map((row) => row.note), [rows])
+  const [editing, setEditing] = useState<{ index: number; note: Note } | null>(null)
+  useEffect(() => {
+    void loadNotes().then(setNotes)
+  }, [])
   const report = useMemo(() => noteReport(notes), [notes])
   const [openYear, setOpenYear] = useState<number | null>(null)
   const maxYear = Math.max(1, ...report.years.map((year) => year.count))
 
+  function save(next: Note[]) {
+    setNotes(next)
+    void saveNotes(next)
+  }
+
   function addWoman(note: Note) {
-    const next = [...extra, note]
-    setExtra(next)
-    saveExtra(next)
+    save([...notes, note])
     setAdding(false)
     setOpenYear(note.year)
   }
@@ -160,10 +151,11 @@ function Record() {
       </div>
       {openYear != null && (
         <div className="ledgers">
-          {rows
+          {notes
+            .map((note, index) => ({ note, index }))
             .filter((row) => row.note.year === openYear)
             .map((row) => (
-              <Person key={row.key} person={row.note} onEdit={() => setEditing(row)} />
+              <Person key={`${row.note.year}-${row.index}`} person={row.note} onEdit={() => setEditing(row)} />
             ))}
         </div>
       )}
@@ -172,14 +164,7 @@ function Record() {
           note={editing.note}
           onClose={() => setEditing(null)}
           onSave={(next) => {
-            if (editing.extraIndex != null) {
-              const copy = extra.map((item, index) => (index === editing.extraIndex ? next : item))
-              setExtra(copy)
-              saveExtra(copy)
-            } else {
-              saveOverride(editing.key, next)
-              setOverrides(loadOverrides())
-            }
+            save(notes.map((item, index) => (index === editing.index ? next : item)))
             setEditing(null)
             setOpenYear(next.year)
           }}
